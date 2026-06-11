@@ -1,7 +1,7 @@
 ---
 title: "bitcoinbook/ch02_overview.adoc at develop"
 source: "https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch02_overview.adoc"
-author:
+author:  Antonopolus
 published:
 created: 2026-06-10
 description:

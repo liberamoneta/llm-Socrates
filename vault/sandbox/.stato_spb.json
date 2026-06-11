@@ -1,5 +1,5 @@
 {
-  "fase": "COMPLETATA",
+  "fase": "IN_DISCUSSIONE",
   "idea_corrente": "\"Bitcoin è indipendente dalla censura sulla sua blockchain, ma non sui punti di ingresso/uscita (exchange, rampe fiat). È politicamente contestato anziché apolitico: la sua governance è distribuita ma non assente, e concentrazioni di hashrate (es. Cina) creano rischi reali di coordinamento. La sua non manipolabilità è limitata al protocollo core; prezzi e layer 2 rimangono vulnerabili. Rimane comunque l'unico asset senza emittente sovrano, e la sua promessa è di neutralità computazionale, non di immunità assoluta da dinamiche di potere.\"",
   "versioni": [
     {
@@ -43,74 +43,18 @@
     }
   ],
   "evidenziazioni": [
-    "il funzionamento delle transazioni come catene di firme digitali",
-    "regola del 50% +1",
-    "La soluzione tradizionale, zecca o banca centrale reintroduce la dipendenza da una terza parte.",
-    "Prende un hash di un blocco di dati e lo pubblica ampiamente (es. in un giornale). Il timestamp prova che i dati esistevano a quel tempo.",
-    "Per implementare il timestamp server in modo peer-to-peer, si usa un sistema di proof-of-work (basato su Hashcash).",
-    "gli incentivi passeranno interamente alle commissioni di transazione, rendendo il sistema autosufficiente.",
-    "Non può verificare la validità delle transazioni, ma può verificare che la rete ha accettato la transazione e che è stata sepolta sotto diversi blocchi.",
-    "modello della \"gambler's ruin\"",
-    "il documento non affronta come il sistema possa evolvere o risolvere dispute, dato che non esiste un'autorità centrale. La governance è lasciata al consenso \"implicito\" della comunità, che è un processo lento e potenzialmente conflittuale (come dimostrato dai successivi fork)."
+    "L'obiettivo principale del protocollo Bitcoin è eliminare la necessità di un intermediario finanziario di fiducia per le transazioni online",
+    "L'immutabilità del registro è garantita da un meccanismo di proof-of-work",
+    "Invece di \"un IP, un voto\" (facilmente falsificabile), si usa \"una CPU, un voto\".",
+    "Le transazioni possono avere più input e più output.",
+    "In Bitcoin, le identità delle parti sono pseudonime (rappresentate da chiavi pubbliche), ma tutte le transazioni sono pubbliche.",
+    "Si usa un modello della \"gambler's ruin\" (rovina del giocatore) per calcolare la probabilità che un attaccante, con una percentuale di potenza di calcolo `q` (minore del 50%), possa recuperare uno svantaggio di `z` blocchi. La probabilità diminuisce esponenzialmente all'aumentare di `z`.",
+    "Il sistema è intrinsecamente dispendioso in termini di energia e potenza di calcolo.",
+    "Il documento afferma che la privacy è preservata grazie all'uso di chiavi pubbliche pseudonime. Tuttavia, la completa trasparenza della blockchain permette tecniche di analisi dei grafi delle transazioni e di clustering degli indirizzi, che possono spesso ricondurre le attività a identità reali. La privacy è quindi molto più debole di quanto la descrizione iniziale possa suggerire, e la tensione tra trasparenza e privacy è una caratteristica intrinseca del design."
   ],
-  "conversazioni": [
-    {
-      "evidenziazione": "il funzionamento delle transazioni come catene di firme digitali",
-      "domanda": "Se una transazione è una catena di firme digitali, chi garantisce che la prima firma della catena — la creazione della moneta — non sia essa stessa arbitraria o ingiusta?",
-      "risposta": "La teoria dei giochi e il consenso distribuito che ne deriva dalla sua applicazione",
-      "timestamp": "2026-06-10T12:14:56.201470"
-    },
-    {
-      "evidenziazione": "regola del 50% +1",
-      "domanda": "Se la regola del 50% +1 è considerata la soglia minima della democrazia, cosa ci dice di una democrazia in cui il 49% viene sistematicamente ignorato?",
-      "risposta": "non rilevante",
-      "timestamp": "2026-06-10T12:50:27.800240"
-    },
-    {
-      "evidenziazione": "La soluzione tradizionale, zecca o banca centrale reintroduce la dipendenza da una terza parte.",
-      "domanda": "Se la terza parte (zecca o banca centrale) è inaccettabile perché reintroduce dipendenza, qual è il criterio per distinguere una \"terza parte\" dannosa da una necessaria o legittima?",
-      "risposta": "il protocollo Bitcoin non necessita di una terza parte",
-      "timestamp": "2026-06-10T12:51:51.150833"
-    },
-    {
-      "evidenziazione": "Prende un hash di un blocco di dati e lo pubblica ampiamente (es. in un giornale). Il timestamp prova che i dati esistevano a quel tempo.",
-      "domanda": "Se il timestamp è reso pubblico e immutabile, chi o cosa garantisce che l'hash non sia stato generato da dati diversi da quelli che dichiari, o che la relazione tra quei dati e l’hash non sia stata costruita in un secondo momento?",
-      "risposta": "crittografia permette solo a chi possiede la chiave segrete di firmare hash transazione. La transazione non è modificabile perchè hash cambierebbe e sarebbe necessaria una nuova firma",
-      "timestamp": "2026-06-10T12:55:20.957102"
-    },
-    {
-      "evidenziazione": "Per implementare il timestamp server in modo peer-to-peer, si usa un sistema di proof-of-work (basato su Hashcash).",
-      "domanda": "Se il proof-of-work è un meccanismo di *costo* computazionale, non di *tempo*, come possiamo essere certi che il timestamp che ne deriva rappresenti un ordinamento temporale reale e non semplicemente un ordinamento di difficoltà computazionale risolta?",
-      "risposta": "la catena più lunga è la catena con più lavoro computazionale accumulato",
-      "timestamp": "2026-06-10T12:57:48.726958"
-    },
-    {
-      "evidenziazione": "gli incentivi passeranno interamente alle commissioni di transazione, rendendo il sistema autosufficiente.",
-      "domanda": "Se gli incentivi passano interamente alle commissioni di transazione, cosa garantisce che la domanda di transazioni rimanga sufficientemente alta da coprire i costi di sicurezza, quando gli stessi utenti potrebbero essere incentivati a minimizzare l'attività sulla rete per ridurre le commissioni?",
-      "risposta": "Domanda_aperta",
-      "timestamp": "2026-06-10T15:00:04.474863"
-    },
-    {
-      "evidenziazione": "Non può verificare la validità delle transazioni, ma può verificare che la rete ha accettato la transazione e che è stata sepolta sotto diversi blocchi.",
-      "domanda": "Se la fiducia nel sistema si basa sulla verifica che la rete ha accettato la transazione, e non sulla validità intrinseca della transazione stessa, non stiamo semplicemente spostando il problema della fiducia da un'autorità centrale a un'autorità distribuita, senza risolvere la questione epistemica di fondo?",
-      "risposta": "salva cosi",
-      "timestamp": "2026-06-10T15:00:56.897848"
-    },
-    {
-      "evidenziazione": "modello della \"gambler's ruin\"",
-      "domanda": "Se il modello della \"gambler's ruin\" descrive un processo stocastico dove la rovina è quasi certa nel lungo periodo, come mai continui a investire tempo e risorse in un sistema — finanziario, cognitivo o sociale — che sai essere strutturalmente sbilanciato contro di te?",
-      "risposta": "Il paper di Satoshi descrive un sistema che **inverte** la ",
-      "timestamp": "2026-06-10T17:41:32.415551"
-    },
-    {
-      "evidenziazione": "il documento non affronta come il sistema possa evolvere o risolvere dispute, dato che non esiste un'autorità centrale. La governance è lasciata al consenso \"implicito\" della comunità, che è un processo lento e potenzialmente conflittuale (come dimostrato dai successivi fork).",
-      "domanda": "Se il consenso implicito è così lento e conflittuale da generare fork, non è forse proprio il fork — e non l’assenza di autorità — la vera forma di governance di un sistema senza centro?",
-      "risposta": "n.d.",
-      "timestamp": "2026-06-10T17:44:11.098281"
-    }
-  ],
-  "indice": 9,
-  "domanda_corrente": "Se il consenso implicito è così lento e conflittuale da generare fork, non è forse proprio il fork — e non l’assenza di autorità — la vera forma di governance di un sistema senza centro?",
-  "evidenziazione_corrente": "il documento non affronta come il sistema possa evolvere o risolvere dispute, dato che non esiste un'autorità centrale. La governance è lasciata al consenso \"implicito\" della comunità, che è un processo lento e potenzialmente conflittuale (come dimostrato dai successivi fork).",
+  "conversazioni": [],
+  "indice": 0,
+  "domanda_corrente": "Se l'intermediario di fiducia è stato storicamente il garante della risoluzione delle dispute nelle transazioni, cosa garantisce che una transazione Bitcoin contestata venga risolta in modo equo?",
+  "evidenziazione_corrente": "L'obiettivo principale del protocollo Bitcoin è eliminare la necessità di un intermediario finanziario di fiducia per le transazioni online",
   "storico_chat": []
 }

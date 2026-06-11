@@ -204,55 +204,24 @@ data_ingest: {date.today()}
     stato["file_corrente"] = out_name
     save_stato(stato)
 
-def cmd_chat(filearg: str = None):
-    """Avvia chat su un file sandbox. Se filearg è specificato, lo imposta come corrente."""
+def cmd_chat():
     stato = load_stato()
-    
-    # Se è stato passato un argomento, imposta quel file come corrente
-    if filearg and filearg.strip():
-        # Verifica che il file esista in sandbox/
-        target_file = filearg.strip()
-        # Se non ha estensione .md, aggiungila (per comodità)
-        if not target_file.endswith(".md"):
-            target_file = target_file + ".md"
-        sandbox_path = SANDBOX / target_file
-        if not sandbox_path.exists():
-            print(f"{Colors.RED}❌ File non trovato in sandbox/: {target_file}{Colors.END}")
-            print(f"   File disponibili in sandbox/:")
-            for f in SANDBOX.glob("*_V1.md"):
-                print(f"     - {f.name}")
-            sys.stdout.flush()
-            return
-        # Imposta il nuovo file corrente
-        stato["file_corrente"] = target_file
-        stato["fase"] = "INGEST_COMPLETATO"  # resetta lo stato della discussione precedente
-        stato["evidenziazioni"] = []
-        stato["conversazioni"] = []
-        stato["indice"] = 0
-        save_stato(stato)
-        print(f"{Colors.GREEN}✅ File attivo cambiato in: {target_file}{Colors.END}")
-        print()
-        sys.stdout.flush()
-    
-    # Ora procedi con la chat sul file corrente
     if not stato.get("file_corrente"):
-        print(f"{Colors.RED}❌ Nessun file attivo. Usa /ingest prima o /chat nomefile.md{Colors.END}")
+        print(f"{Colors.RED}❌ Nessun file attivo. Usa /ingest prima{Colors.END}")
         sys.stdout.flush()
         return
     file_path = SANDBOX / stato["file_corrente"]
     if not file_path.exists():
-        print(f"{Colors.RED}❌ File non trovato: {file_path}{Colors.END}")
+        print(f"{Colors.RED}❌ File non trovato{Colors.END}")
         sys.stdout.flush()
         return
-    
     contenuto = read_file_safe(file_path)
     evidenze = estrai_evidenziazioni(contenuto)
     if not evidenze:
-        print(f"{Colors.YELLOW}⚠️ Nessuna evidenziazione >...< trovata in {stato['file_corrente']}{Colors.END}")
-        print(f"   Aggiungi >argomento< nel file e riprova.")
+        print(f"{Colors.YELLOW}⚠️ Nessuna evidenziazione >...< trovata. Aggiungile nel file e riprova.{Colors.END}")
         sys.stdout.flush()
         return
-    print(f"{Colors.GREEN}🔍 Trovate {len(evidenze)} evidenziazioni in {stato['file_corrente']}:{Colors.END}")
+    print(f"{Colors.GREEN}🔍 Trovate {len(evidenze)} evidenziazioni:{Colors.END}")
     for e in evidenze:
         print(f"   • {e}")
     print()
@@ -410,6 +379,7 @@ Scrivi in prima persona ("Ho compreso che...", "Emergono questi punti chiave..."
     save_stato(stato)
 
 def cmd_promuovi(titolo: str):
+    """Crea una nuova pagina wiki a partire dal file sandbox corrente, con menu interattivo"""
     stato = load_stato()
     if not stato.get("file_corrente"):
         print(f"{Colors.RED}❌ Nessun file sandbox attivo. Esegui /ingest prima.{Colors.END}")
@@ -435,6 +405,7 @@ def cmd_promuovi(titolo: str):
         sys.stdout.flush()
         return
 
+    # FASE 1: proposta dominio/tipo (LLM)
     print(f"{Colors.CYAN}🤖 Analizzo il contenuto per proporre dominio e tipo...{Colors.END}")
     domini_validi = ["Bitcoin", "Cultura", "Economia", "Generale", "Geopolitica", "Storia", "Tecnologia"]
     tipi_validi = ["appunti", "articolo", "paper", "podcast", "post"]
@@ -466,6 +437,7 @@ Rispondi SOLO in formato JSON:
         dominio_proposto = "Generale"
         tipo_proposto = "articolo"
 
+    # FASE 2: ricerca collegamenti automatici (LLM)
     print(f"{Colors.CYAN}🔍 Cerco pagine wiki correlate...{Colors.END}")
     wiki_pages = {}
     for f in WIKI.glob("*.md"):
@@ -492,11 +464,13 @@ Solo quelle realmente rilevanti, massimo 5.
         except:
             collegamenti_trovati = []
 
+    # FASE 3: Menu interattivo per conferma
     print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
     print(f"{Colors.BOLD}📝 CREAZIONE NUOVA PAGINA WIKI{Colors.END}")
     print(f"{Colors.BLUE}{'='*60}{Colors.END}\n")
     print(f"{Colors.GREEN}Titolo:{Colors.END} {titolo}")
 
+    # Scelta dominio
     print(f"\n{Colors.YELLOW}📌 Scegli il DOMINIO (modifica se necessario):{Colors.END}")
     for i, d in enumerate(domini_validi, 1):
         default = " (proposto)" if d == dominio_proposto else ""
@@ -515,6 +489,7 @@ Solo quelle realmente rilevanti, massimo 5.
         print(f"{Colors.RED}Scelta non valida, uso {dominio_proposto}{Colors.END}")
         dominio_finale = dominio_proposto
 
+    # Scelta tipo
     print(f"\n{Colors.YELLOW}📌 Scegli il TIPO:{Colors.END}")
     for i, t in enumerate(tipi_validi, 1):
         default = " (proposto)" if t == tipo_proposto else ""
@@ -533,11 +508,13 @@ Solo quelle realmente rilevanti, massimo 5.
         print(f"{Colors.RED}Scelta non valida, uso {tipo_proposto}{Colors.END}")
         tipo_finale = tipo_proposto
 
+    # Fonti
     fonti_match = re.search(r'fonte: (.*?)(?:\n|$)', contenuto_sandbox)
     fonti = [f.strip() for f in fonti_match.group(1).split(',')] if fonti_match else []
     fonti_str = ", ".join([f"[[{f}]]" for f in fonti])
     cicli_spb = len(evidenze_risposte)
 
+    # Riepilogo frontmatter
     print(f"\n{Colors.BLUE}{'─'*40}{Colors.END}")
     print(f"{Colors.BOLD}📄 Frontmatter proposto:{Colors.END}")
     print(f"  titolo: {titolo}")
@@ -562,6 +539,7 @@ Solo quelle realmente rilevanti, massimo 5.
         nuovo_tipo = input(f"Tipo ({tipo_finale}): ").strip()
         if nuovo_tipo: tipo_finale = nuovo_tipo
 
+    # FASE 4: Scelta multipla dei collegamenti
     collegamenti_scelti = []
     if collegamenti_trovati:
         print(f"\n{Colors.CYAN}🔗 Pagine wiki correlate trovate automaticamente:{Colors.END}")
@@ -585,6 +563,7 @@ Solo quelle realmente rilevanti, massimo 5.
                     break
                 collegamenti_scelti.append(manuale)
 
+    # FASE 5: Generazione e salvataggio della pagina wiki
     argomenti_principali = "\n".join([f"- {ev}" for ev,_,_ in evidenze_risposte])
     discussione = ""
     for ev, dom, risp in evidenze_risposte:
@@ -720,30 +699,16 @@ def print_banner():
 {Colors.BLUE}{Colors.BOLD}╔══════════════════════════════════════════════════════════════╗
 ║     SISTEMA SOCRATES-PLATO-BAYES - Scrittura immediata      ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.END}
-
 {Colors.YELLOW}Comandi:{Colors.END}
-
-  {Colors.GREEN}/move{Colors.END}      <file>
-  {Colors.GREEN}/list{Colors.END}     [cartella]
-  {Colors.GREEN}/ingest{Colors.END}   <file>
-  {Colors.GREEN}/chat{Colors.END}     [file]
-  {Colors.GREEN}/salva{Colors.END}    "risposta"
-  {Colors.GREEN}/fine{Colors.END}
-  {Colors.GREEN}/abbandono{Colors.END}
-  {Colors.GREEN}/promuovi{Colors.END} "Titolo"
-  {Colors.GREEN}/query{Colors.END}    "domanda"
-  {Colors.GREEN}/lint{Colors.END}
-  {Colors.GREEN}/backup{Colors.END}
-  {Colors.GREEN}/stato{Colors.END}
-  {Colors.GREEN}/clear{Colors.END}
-  {Colors.GREEN}/exit{Colors.END}
-
+  /move <file>      /list [cartella]   /ingest <file>   /chat
+  /salva "risposta" (durante chat)     /fine            /abbandono
+  /promuovi "Titolo"                   /query "..."     
+  /lint             /backup            /stato           /clear
+  /exit
 {Colors.BLUE}💡 >argomento< nel file, poi /chat. Ogni /salva scrive subito domanda+conversazione+riassunto+risposta.{Colors.END}
 {Colors.BLUE}💡 /promuovi crea una pagina wiki nel vault/wiki/ con conferma frontmatter e collegamenti.{Colors.END}
-{Colors.BLUE}💡 /chat nomefile.md imposta quel file come attivo e avvia la chat.{Colors.END}
 """)
     sys.stdout.flush()
-
 
 # --------------------------------------------------------------
 # AUTOCOMPLETAMENTO AVANZATO
@@ -755,6 +720,7 @@ class SpbCompleter:
         self.list_targets = ["asset", "clippings", "backups", "raw", "sandbox", "wiki", "all"]
 
     def get_matches(self, text, state):
+        # readline potrebbe non essere disponibile (es. ambiente senza readline)
         if readline is None:
             return None
         try:
@@ -765,7 +731,7 @@ class SpbCompleter:
         if not parts:
             return None
         cmd = parts[0].lower()
-        # Autocompletamento comando stesso
+        # Autocompletamento comando stesso (prima parola)
         if len(parts) == 1 and not line.endswith(' '):
             matches = [c for c in self.commands if c.startswith(text)]
             return matches[state] if state < len(matches) else None
@@ -788,15 +754,6 @@ class SpbCompleter:
             prefix = parts[1] if len(parts) > 1 else ""
             try:
                 files = [f.name for f in RAW.glob("*") if f.is_file()]
-                matches = [f for f in files if f.startswith(prefix)]
-                return matches[state] if state < len(matches) else None
-            except:
-                return None
-        # Autocompletamento per /chat: suggerisce file _V1.md in sandbox/
-        if cmd == "/chat" and len(parts) <= 2:
-            prefix = parts[1] if len(parts) > 1 else ""
-            try:
-                files = [f.name for f in SANDBOX.glob("*_V1.md") if f.is_file()]
                 matches = [f for f in files if f.startswith(prefix)]
                 return matches[state] if state < len(matches) else None
             except:
@@ -850,8 +807,7 @@ def main():
                     print(f"{Colors.RED}❌ Specifica il file (usa TAB per autocompletare){Colors.END}")
                     sys.stdout.flush()
             elif cmd == "/chat":
-                # Ora accetta un argomento opzionale (il file sandbox)
-                cmd_chat(arg if arg else None)
+                cmd_chat()
             elif cmd == "/salva":
                 print(f"{Colors.YELLOW}⚠️ Usa /salva durante la chat (dopo /chat){Colors.END}")
                 sys.stdout.flush()
