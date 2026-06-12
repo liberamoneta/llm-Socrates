@@ -9,6 +9,7 @@ import json
 import shutil
 import zipfile
 import re
+import textwrap
 from datetime import date, datetime
 from pathlib import Path
 from openai import OpenAI
@@ -26,6 +27,16 @@ class Colors:
     GREEN = '\033[92m'; YELLOW = '\033[93m'; BLUE = '\033[94m'
     RED = '\033[91m'; CYAN = '\033[96m'; MAGENTA = '\033[95m'
     END = '\033[0m'; BOLD = '\033[1m'; DIM = '\033[2m'
+
+def print_wrapped(text, color=Colors.CYAN, prefix="🤖 "):
+    try:
+        width = shutil.get_terminal_size().columns - len(prefix) - 2
+        if width < 40:
+            width = 80
+    except:
+        width = 80
+    wrapped = textwrap.fill(text, width=width)
+    print(f"\n{color}{prefix}{wrapped}{Colors.END}")
 
 ASSET = Path("asset")
 CLIPPINGS = Path("clippings")
@@ -74,14 +85,17 @@ def load_stato() -> dict:
         try:
             return json.loads(read_file_safe(STATE_FILE))
         except:
-            return {"fase": None, "file_corrente": None, "evidenziazioni": [], "conversazioni": [], "indice": 0}
-    return {"fase": None, "file_corrente": None, "evidenziazioni": [], "conversazioni": [], "indice": 0}
+            return {"fase": None, "file_corrente": None, "evidenziazioni": [], "conversazioni": [], "indice": 0,
+                    "domanda_corrente": None, "evidenziazione_corrente": None, "storico_chat": []}
+    return {"fase": None, "file_corrente": None, "evidenziazioni": [], "conversazioni": [], "indice": 0,
+            "domanda_corrente": None, "evidenziazione_corrente": None, "storico_chat": []}
 
 def save_stato(stato: dict):
     write_file_safe(STATE_FILE, json.dumps(stato, ensure_ascii=False, indent=2))
 
 def reset_stato():
-    save_stato({"fase": None, "file_corrente": None, "evidenziazioni": [], "conversazioni": [], "indice": 0})
+    save_stato({"fase": None, "file_corrente": None, "evidenziazioni": [], "conversazioni": [], "indice": 0,
+                "domanda_corrente": None, "evidenziazione_corrente": None, "storico_chat": []})
 
 def read_agent_md() -> str:
     return read_file_safe(AGENT_MD) if AGENT_MD.exists() else "(agent.md non trovato)"
@@ -141,7 +155,7 @@ def cmd_list(cartella: str = None):
                 print(f"  ... e altri {len(files)-10}")
     else:
         print(f"{Colors.RED}❌ Cartella sconosciuta{Colors.END}")
-    print()  # riga vuota per separare
+    print()
     sys.stdout.flush()
 
 def cmd_ingest(filepath: str):
@@ -210,9 +224,7 @@ def cmd_chat(filearg: str = None):
     
     # Se è stato passato un argomento, imposta quel file come corrente
     if filearg and filearg.strip():
-        # Verifica che il file esista in sandbox/
         target_file = filearg.strip()
-        # Se non ha estensione .md, aggiungila (per comodità)
         if not target_file.endswith(".md"):
             target_file = target_file + ".md"
         sandbox_path = SANDBOX / target_file
@@ -223,12 +235,49 @@ def cmd_chat(filearg: str = None):
                 print(f"     - {f.name}")
             sys.stdout.flush()
             return
-        # Imposta il nuovo file corrente
+        
+        # Se è lo stesso file e siamo in discussione, non resettare
+        if stato.get("file_corrente") == target_file and stato.get("fase") == "IN_DISCUSSIONE":
+            print(f"{Colors.GREEN}✅ Ripresa discussione su: {target_file}{Colors.END}")
+            
+            # Mostra lo stato corrente
+            idx = stato.get("indice", 0)
+            evidenze = stato.get("evidenziazioni", [])
+            totale = len(evidenze)
+            
+            if idx < totale:
+                print(f"\n{Colors.YELLOW}📌 Riprendo dall'evidenziazione {idx+1}/{totale}:{Colors.END}")
+                print(f"   {Colors.CYAN}{evidenze[idx]}{Colors.END}")
+                
+                if stato.get("domanda_corrente"):
+                    print(f"\n{Colors.DIM}📝 Domanda in corso:{Colors.END}")
+                    print_wrapped(stato["domanda_corrente"], color=Colors.CYAN, prefix="")
+                
+                storico_len = len(stato.get("storico_chat", []))
+                if storico_len > 0:
+                    print(f"\n{Colors.DIM}💬 Storico conversazione: {storico_len} messaggi{Colors.END}")
+                print()
+                sys.stdout.flush()
+                
+                # Riprendi la chat
+                chat_libera()
+                return
+            else:
+                print(f"{Colors.YELLOW}⚠️ Tutte le {totale} evidenziazioni sono già state completate.{Colors.END}")
+                print(f"   Usa /fine per generare il riassunto finale.{Colors.END}")
+                print()
+                sys.stdout.flush()
+                return
+        
+        # File diverso o prima volta: resetta
         stato["file_corrente"] = target_file
-        stato["fase"] = "INGEST_COMPLETATO"  # resetta lo stato della discussione precedente
+        stato["fase"] = "INGEST_COMPLETATO"
         stato["evidenziazioni"] = []
         stato["conversazioni"] = []
         stato["indice"] = 0
+        stato["domanda_corrente"] = None
+        stato["evidenziazione_corrente"] = None
+        stato["storico_chat"] = []
         save_stato(stato)
         print(f"{Colors.GREEN}✅ File attivo cambiato in: {target_file}{Colors.END}")
         print()
@@ -280,7 +329,8 @@ def avvia_evidenziazione():
     print(f"{Colors.DIM}🤖 LLM genera domanda socratica...{Colors.END}")
     msg = [{"role":"user","content":f"Genera una domanda socratica su: {ev}\nSolo la domanda, senza preamboli."}]
     domanda = call_llm(build_system(), msg)
-    print(f"\n{Colors.GREEN}📝 DOMANDA:{Colors.END}\n{Colors.CYAN}{domanda}{Colors.END}")
+    print(f"\n{Colors.GREEN}📝 DOMANDA:{Colors.END}")
+    print_wrapped(domanda, color=Colors.CYAN, prefix="")
     print(f"\n{Colors.DIM}Dialogo libero. Quando hai la risposta definitiva, usa:{Colors.END}")
     print(f"   {Colors.GREEN}/salva \"la tua risposta\"{Colors.END}")
     sys.stdout.flush()
@@ -339,6 +389,9 @@ Riassunto:"""
             sys.stdout.flush()
             stato["indice"] += 1
             stato["conversazioni"].append({})
+            stato["domanda_corrente"] = None
+            stato["evidenziazione_corrente"] = None
+            stato["storico_chat"] = []
             save_stato(stato)
             if stato["indice"] < len(stato["evidenziazioni"]):
                 avvia_evidenziazione()
@@ -364,7 +417,7 @@ Rispondi in modo socratico, colloquiale."""}]
             storico.append(f"LLM: {risp_llm}")
             stato["storico_chat"] = storico
             save_stato(stato)
-            print(f"\n{Colors.CYAN}🤖 {risp_llm}{Colors.END}")
+            print_wrapped(risp_llm)
             print()
             sys.stdout.flush()
 
@@ -654,7 +707,7 @@ def cmd_query(domanda: str):
     ctx = "\n".join([f"### {nome}\n{testo[:1500]}" for nome, testo in wiki_pages.items()])
     msg = [{"role":"user","content":f"Domanda: {domanda}\n\nPagine wiki:\n{ctx}\nRispondi in italiano usando [[wikilink]]."}]
     risp = call_llm(build_system(), msg)
-    print(f"\n{Colors.CYAN}{risp}{Colors.END}")
+    print_wrapped(risp)
     print()
     sys.stdout.flush()
 
@@ -850,7 +903,6 @@ def main():
                     print(f"{Colors.RED}❌ Specifica il file (usa TAB per autocompletare){Colors.END}")
                     sys.stdout.flush()
             elif cmd == "/chat":
-                # Ora accetta un argomento opzionale (il file sandbox)
                 cmd_chat(arg if arg else None)
             elif cmd == "/salva":
                 print(f"{Colors.YELLOW}⚠️ Usa /salva durante la chat (dopo /chat){Colors.END}")
