@@ -56,99 +56,157 @@ Il ciclo si svolge all'interno di un singolo file in `sandbox/sdbx_[nome]_V1.md`
 L'utente deposita un file in `clippings/`, poi:
 
 1. `/move <file>` — sposta in `raw/`
-2. `/ingest <file>` — LLM genera riassunto esaustivo in `sandbox/sdbx_[nome]_V1.md` (italiano)
+2. `/ingest <file>` — LLM genera riassunto ESAUSTIVO in `sandbox/sdbx_[nome]_V1.md` (italiano)
 3. L'utente **legge il riassunto** e **evidenzia** gli argomenti che vuole discutere usando il formato `>argomento<` direttamente nel file
 4. `/chat` — avvia la discussione
 
-**L'utente NON scrive un'idea finale.** Il suo ruolo è selezionare gli argomenti da discutere.
-
-### Fase 1 — SOCRATE (implicita)
-
-L'utente ha già **evidenziato** gli argomenti nel file. L'LLM legge queste evidenziazioni come "ciò che l'utente vuole discutere e approfondire".
-
-### Fase 2 — PLATONE: l'LLM sfida e dialoga (con scrittura immediata)
-
-L'utente lancia `/chat`. L'LLM:
-
-1. Legge il file `sandbox/sdbx_[nome]_V1.md`
-2. **Estrae gli argomenti evidenziati** con `>argomento<`
-3. Per OGNI evidenziazione, genera UNA domanda socratica
-4. Avvia un **dialogo libero** con l'utente sulla domanda (l'LLM può cercare informazioni online se utile)
-5. L'utente risponde, discute, approfondisce liberamente
-6. Quando l'utente è soddisfatto, usa `/salva "risposta definitiva"`
-7. L'LLM **immediatamente**:
-   - genera un **riassunto narrativo tecnico** della conversazione (testo fluido, senza punti elenco, linguaggio preciso)
-   - scrive nel file sandbox (nella sezione `## 🗨️ DISCUSSIONE SOCRATICA`) un blocco completo che contiene: domanda, conversazione integrale, riassunto narrativo, risposta finale
-   - passa all'evidenziazione successiva
-
-**Importante:** la scrittura avviene subito, non alla fine. Il file sandbox viene aggiornato dopo ogni `/salva`.
-
-### Fase 3 — BAYES: riassunto finale
-
-Dopo aver discusso tutte le evidenziazioni, l'utente lancia `/fine`.
-
-LLM **genera un riassunto narrativo unificato** (sezione `## ✅ IL MIO SAPERE`) che:
-- Legge tutti i riassunti delle singole evidenziazioni
-- Li unisce in un unico racconto fluido (nessun punto elenco)
-- Cerca un filo logico che collega le varie evidenziazioni
-- Usa linguaggio tecnico preciso
-- È scritto in prima persona ("Ho compreso che...", "È emerso che...")
-
-### Fase 4 — PROMOZIONE
-
-Per trasformare la discussione in una pagina wiki permanente, l'utente usa:
-/promuovi "Titolo della pagina"
-
-text
-
-L'LLM:
-- Propone automaticamente **dominio** (da lista: Bitcoin, Cultura, Economia, Generale, Geopolitica, Storia, Tecnologia) e **tipo** (appunti, articolo, paper, podcast, post)
-- Cerca pagine wiki correlate (analisi semantica)
-- Mostra un menu interattivo per confermare/modificare frontmatter e selezionare (anche multipli) i collegamenti
-- Crea la pagina wiki in `vault/wiki/[slug].md` **copiando esattamente** il contenuto del sandbox (non rigenera nulla)
-- Aggiorna `index.md` e `log.md`
-- **Sposta** il file sandbox in `sandbox/archiviati/`
-
-### Fase 5 — RIPRISTINO (opzionale)
-
-Se si vuole riprendere una discussione archiviata:
-/riprendi sdbx_nome_V1.md
-
-text
-
-L'LLM:
-- Cerca il file in `sandbox/archiviati/`
-- Lo **copia** (non sposta) in `sandbox/`
-- Resetta lo stato
-- Messaggio: "✅ Discussione ripristinata da archivio. Usa /chat per continuare."
-
----
-
-## 3. Operazioni disponibili
-
-| Comando | Descrizione |
-|---------|-------------|
-| `/move <file>` | Sposta un file da `clippings/` a `raw/` |
-| `/list [cartella]` | Mostra i file nelle cartelle |
-| `/ingest <file>` | Ingestisce una fonte in `raw/` e crea riassunto in `sandbox/sdbx_nome_V1.md` |
-| `/chat [file]` | Avvia/riprende discussione socratica sulle evidenziazioni `>...<` |
-| `/salva "risposta"` | **Durante la chat**: salva la discussione con riassunto narrativo tecnico |
-| `/fine` | Genera il riassunto unificato (`## ✅ IL MIO SAPERE`) |
-| `/promuovi "<titolo>"` | Promuove la discussione a pagina wiki e archivia il sandbox |
-| `/riprendi <file>` | Ripristina un sandbox archiviato per continuare la discussione |
-| `/abbandono` | Archivia la discussione corrente in `sandbox/archiviati/` |
-| `/query "<domanda>"` | Interroga il wiki; risposta con link + descrizione `[[pagina]] — testo` |
-| `/lint` | Health-check del wiki (solo output a schermo) |
-| `/backup` | Crea un backup compresso di tutto il vault |
-| `/stato` | Mostra lo stato del ciclo SPB corrente e statistiche vault |
-| `/clear` | Pulisce lo schermo |
-| `/exit` | Esce dalla chat interattiva |
-
----
-
-## 4. Struttura del file in `sandbox/sdbx_[nome]_V1.md`
+**Struttura del file dopo /ingest:**
 
 ```markdown
+---
+stato: BOZZA
+lingua: italiano
+fonte: [nome_file]
+data_ingest: YYYY-MM-DD
+---
+
+# 📌 SINTESI ESAUSTIVA
+
+[Riassunto in paragrafi continui, termini tecnici originali,
+seguendo l'ordine del documento. Niente elenchi puntati inutili.]
+
+---
+
+## 🗨️ DISCUSSIONE SOCRATICA
+
+(Lascia vuoto)
+
+---
+
+## ✅ IL MIO SAPERE
+
+(Lascia vuoto)
+L'utente NON scrive un'idea finale. Il suo ruolo è selezionare gli argomenti da discutere aggiungendo >argomento< nel testo della SINTESI ESAUSTIVA.
+
+Fase 1 — SOCRATE (implicita)
+L'utente ha già evidenziato gli argomenti nel file. L'LLM legge queste evidenziazioni come "ciò che l'utente vuole discutere e approfondire".
+
+Fase 2 — PLATONE: l'LLM sfida e dialoga (con scrittura immediata)
+L'utente lancia /chat. L'LLM:
+
+Legge il file sandbox/sdbx_[nome]_V1.md
+
+Estrae gli argomenti evidenziati con >argomento<
+
+Per OGNI evidenziazione, genera UNA domanda socratica
+
+Avvia un dialogo libero con l'utente sulla domanda (l'LLM può cercare informazioni online se utile)
+
+L'utente risponde, discute, approfondisce liberamente
+
+Quando l'utente è soddisfatto, usa /salva "risposta definitiva"
+
+L'LLM immediatamente:
+
+genera un riassunto narrativo tecnico della conversazione (testo fluido, senza punti elenco, linguaggio preciso)
+
+scrive nel file sandbox (nella sezione ## 🗨️ DISCUSSIONE SOCRATICA) un blocco completo che contiene: domanda, conversazione integrale, riassunto narrativo, risposta finale
+
+passa all'evidenziazione successiva
+
+Importante: la scrittura avviene subito, non alla fine. Il file sandbox viene aggiornato dopo ogni /salva.
+
+Fase 3 — BAYES: riassunto finale
+Dopo aver discusso tutte le evidenziazioni, l'utente lancia /fine.
+
+LLM genera un riassunto narrativo unificato (sezione ## ✅ IL MIO SAPERE) che:
+
+Legge tutti i riassunti delle singole evidenziazioni
+
+Li unisce in un unico racconto fluido (nessun punto elenco)
+
+Cerca un filo logico che collega le varie evidenziazioni
+
+Usa linguaggio tecnico preciso
+
+È scritto in prima persona ("Ho compreso che...", "È emerso che...")
+
+Fase 4 — PROMOZIONE
+Per trasformare la discussione in una pagina wiki permanente, l'utente usa:
+
+text
+/promuovi "Titolo della pagina"
+Comportamento di /promuovi:
+
+Situazione	Azione
+Pagina non esiste	Crea wiki/Titolo.md con il contenuto del sandbox
+Pagina esiste già	Crea wiki/Titolo v2.md (o Titolo (data).md) con wikilink automatico - [[Titolo originale]]
+Il contenuto della pagina wiki è:
+
+markdown
+---
+titolo: [Titolo]
+dominio: [Bitcoin | Cultura | Economia | Generale | Geopolitica | Storia | Tecnologia]
+tipo: [appunti | articolo | paper | podcast | post]
+stato: attivo
+data_promozione: YYYY-MM-DD
+cicli_spb: [numero di evidenziazioni discusse]
+fonti: [[file1_in_raw]], [[file2_in_raw]]
+---
+
+# 📌 SINTESI ESAUSTIVA
+
+[Riassunto originale dal sandbox]
+
+---
+
+## ✅ IL MIO SAPERE
+
+[Riassunto unificato generato da /fine]
+
+## Collegamenti
+
+- [[pagina_correlata_1]]
+- [[pagina_correlata_2]]
+Nota: La sezione ## 🗨️ DISCUSSIONE SOCRATICA non viene copiata nel wiki. Il wiki conserva solo il risultato (SINTESI + IL MIO SAPERE), non il percorso dialogico.
+
+Dopo la promozione, il file sandbox viene spostato in sandbox/archiviati/.
+
+Fase 5 — RIPRISTINO (opzionale)
+Se si vuole riprendere una discussione archiviata:
+
+text
+/riprendi sdbx_nome_V1.md
+L'LLM:
+
+Cerca il file in sandbox/archiviati/
+
+Lo copia (non sposta) in sandbox/
+
+Resetta lo stato
+
+Messaggio: "✅ Discussione ripristinata da archivio. Usa /chat per continuare."
+
+3. Operazioni disponibili
+Comando	Descrizione
+/move <file>	Sposta un file da clippings/ a raw/
+/list [cartella]	Mostra i file nelle cartelle
+/analizza <file>	Analizza un file e offre: Ingest chunk, Traduci + Ingest chunk, Annulla
+/ingest <file>	Ingestisce una fonte in raw/ e crea riassunto in sandbox/sdbx_nome_V1.md
+/chat [file]	Avvia/riprende discussione socratica sulle evidenziazioni >...<
+/salva "risposta"	Durante la chat: salva la discussione con riassunto narrativo tecnico
+/fine	Genera il riassunto unificato (## ✅ IL MIO SAPERE)
+/promuovi "<titolo>"	Promuove la discussione a pagina wiki e archivia il sandbox
+/riprendi <file>	Ripristina un sandbox archiviato per continuare la discussione
+/archivia	Archivia la discussione corrente in sandbox/archiviati/
+/query "<domanda>"	Interroga il wiki; risposta con link + descrizione [[pagina]] — testo
+/lint	Health-check del wiki (solo output a schermo)
+/backup	Crea un backup compresso di tutto il vault
+/stato	Mostra lo stato del ciclo SPB corrente e statistiche vault
+/clear	Pulisce lo schermo
+/exit	Esce dalla chat interattiva
+4. Formato del file sandbox (sandbox/sdbx_[nome]_V1.md)
+markdown
 ---
 stato: BOZZA | COMPLETATA
 lingua: italiano
@@ -158,37 +216,8 @@ data_ingest: YYYY-MM-DD
 
 # 📌 SINTESI ESAUSTIVA
 
-[Riassunto completo della fonte in italiano, senza limiti di caratteri]
-
----
-
-## 🎯 TESI CENTRALE
-
-[3-5 frasi]
-
----
-
-## 📚 ARGOMENTI E SOTTO-ARGOMENTI
-
-### 1. [Primo argomento]
-- Punto chiave
-- Evidenze/esempi
-
->argomento_da_discutere<
-
----
-
-## ⚠️ TENSIONI, CONTRADDIZIONI E PUNTI DEBOLI
-
-1. **Tensione 1** — Descrizione
-
->altro_argomento<
-
----
-
-## 🔗 POTENZIALI CONNESSIONI CON WIKI ESISTENTE
-
-- [[pagina]] — descrizione
+[Riassunto in paragrafi continui, con termini tecnici originali,
+seguendo l'ordine del documento. L'utente aggiunge qui le evidenziazioni >...<]
 
 ---
 
@@ -214,22 +243,16 @@ text
 
 ### Evidenziazione 2: >altro_argomento<
 
-**Domanda:** [Domanda socratica]
-
-**Conversazione:** ...
-
-**Riassunto della conversazione:** ...
-
-**Risposta finale:** ...
+...
 
 ---
 
 ## ✅ IL MIO SAPERE
 
 [Riassunto narrativo unificato, in prima persona, con filo logico tra le evidenziazioni]
-Note importanti:
+Note:
 
-L'utente inserisce solo evidenziazioni >argomento< nel testo del riassunto (non scrive idee finali)
+L'utente inserisce solo evidenziazioni >argomento< nel testo della SINTESI ESAUSTIVA
 
 La discussione socratica si concentra esclusivamente sugli argomenti evidenziati
 
@@ -237,7 +260,7 @@ L'LLM scrive nel file solo durante /salva (un blocco per evidenziazione) e duran
 
 L'LLM non scrive mai durante il dialogo libero
 
-5. Struttura della pagina wiki in vault/wiki/[slug].md
+5. Struttura della pagina wiki (vault/wiki/[slug].md)
 markdown
 ---
 titolo: [Titolo della pagina]
@@ -249,12 +272,22 @@ cicli_spb: [numero di evidenziazioni discusse]
 fonti: [[file1_in_raw]], [[file2_in_raw]]
 ---
 
-[COPIA ESATTA DEL CONTENUTO DEL SANDBOX]
+# 📌 SINTESI ESAUSTIVA
+
+[Riassunto originale dal sandbox]
+
+---
+
+## ✅ IL MIO SAPERE
+
+[Riassunto unificato generato da /fine]
 
 ## Collegamenti
 
-- [[pagina_correlata_1]] — breve descrizione
-- [[pagina_correlata_2]] — breve descrizione
+- [[pagina_correlata_1]]
+- [[pagina_correlata_2]]
+Nota: La sezione ## 🗨️ DISCUSSIONE SOCRATICA non viene copiata nel wiki. Il wiki conserva solo il risultato.
+
 6. Formato delle risposte QUERY
 L'LLM risponde alle query con link + descrizione:
 
@@ -262,11 +295,13 @@ Secondo [[trappola di Tucidide]] — il conflitto tra potenza egemone ed emergen
 
 Questo formato permette di capire il contenuto senza dover cliccare sul link.
 
+Se le informazioni nel wiki sono insufficienti, /query cerca online (Brave API) e marca le fonti con [WIKI] e [WEB].
+
 7. Flussi completi
 Nuova pagina da fonte
 text
 clippings/ → /move → raw/ → /ingest 
-→ utente evidenzia >argomento< nel file sandbox 
+→ utente evidenzia >argomento< nel file sandbox (nella SINTESI ESAUSTIVA)
 → /chat → LLM fa domande, utente dialogga (LLM può cercare online)
 → /salva "risposta" (per ogni evidenziazione, con riassunto narrativo tecnico)
 → /fine (genera riassunto unificato)
@@ -275,10 +310,10 @@ Ripresa di una discussione archiviata
 text
 /riprendi sdbx_nome_V1.md
 → /chat → continua la discussione
-Aggiornamento di una pagina esistente (manuale)
+Aggiornamento di una pagina esistente
 Poiché non esiste /discuti, l'utente può:
 
-Creare una nuova pagina con /promuovi
+Creare una nuova pagina con /promuovi (il sistema crea automaticamente una nuova versione con wikilink all'originale)
 
 Unire manualmente i contenuti (copia/incolla) nella pagina wiki originale
 
@@ -334,6 +369,8 @@ Riassunto narrativo tecnico. I riassunti sono testi fluidi, senza punti elenco, 
 
 Archiviazione dopo promozione. I sandbox promossi vengono spostati in sandbox/archiviati/.
 
+Versionamento delle pagine wiki. Se una pagina esiste già, /promuovi crea una nuova versione (es. Titolo v2) con wikilink all'originale.
+
 11. Differenza con la llm-wiki standard di Karpathy
 Aspetto	llm-wiki (Karpathy)	llm-wiki + SPB
 Chi scrive il wiki	L'LLM	L'utente (con supporto LLM)
@@ -345,7 +382,8 @@ Internalizzazione	Non garantita	Strutturalmente necessaria
 Lingua	Indifferente	Italiano
 Ruolo dell'utente	Lettore passivo	Selettore attivo di argomenti
 Il sistema SPB sacrifica velocità per densità e affidabilità epistemica.
-È il modo giusto per domini dove la comprensione profonda vale più della copertura estesa.
+È il modo giusto per domini dove la comprensione profonda vale più della
+copertura estesa.
 
 Questo file è la fonte di verità del comportamento dell'agente.
 Aggiornarlo è un atto di manutenzione del sistema, non una modifica minore.

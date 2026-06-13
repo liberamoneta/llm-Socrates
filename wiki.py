@@ -673,6 +673,10 @@ def cmd_list(cartella: str = None):
     print()
     sys.stdout.flush()
 
+# ============================================================
+# COMANDO INGEST (MODIFICATO - STRUTTURA SEMPLIFICATA)
+# ============================================================
+
 def cmd_ingest(filepath: str):
     src = RAW / filepath
     if not src.exists():
@@ -683,36 +687,48 @@ def cmd_ingest(filepath: str):
     testo = read_file_safe(src)
     out_name = f"sdbx_{src.stem}_V1.md"
     out_file = SANDBOX / out_name
-    msg = [{"role":"user","content":f"""Analizza e scrivi riassunto ESAUSTIVO in italiano.
+    
+    # Nuovo prompt semplificato - solo SINTESI ESAUSTIVA (niente TESI, ARGOMENTI, TENSIONI)
+    msg = [{"role":"user","content":f"""Analizza questa fonte e scrivi un riassunto ESAUSTIVO in italiano che segua fedelmente la struttura e il filo logico del documento originale.
 
 Fonte: {src.name}
-Contenuto: {testo[:10000]}
+Contenuto: {testo[:15000]}
 
-USA ESATTAMENTE QUESTA STRUTTURA:
+REGOLE FONDAMENTALI:
+
+1. **Mantieni i termini tecnici originali** - Usa ESATTAMENTE le stesse parole dell'autore per concetti chiave. Esempi: "proof-of-work", "double-spending", "timestamp server", "Merkle tree", "nonce", "hash", "chain of digital signatures", "peer-to-peer". NON tradurre questi termini in modo libero.
+
+2. **Segui la struttura originale** - Rispetta l'ordine dei paragrafi e delle sezioni del documento.
+
+3. **Flusso narrativo continuo** - Scrivi in paragrafi collegati. Usa elenchi puntati SOLO se nel documento originale sono presenti come elenchi.
+
+4. **Preserva i dati quantitativi** - Tutti i numeri, percentuali, formule e riferimenti temporali devono essere mantenuti esattamente.
+
+5. **Citazioni testuali importanti** - Le frasi che definiscono concetti fondamentali vanno in blockquote con >
+
+6. **Taglia il superfluo** - Elimina esempi ripetuti, incisi ridondanti, ma mai definizioni, dati o passaggi logici essenziali.
+
+STRUTTURA RICHIESTA NEL FILE:
 
 # 📌 SINTESI ESAUSTIVA
-...
 
-## 🎯 TESI CENTRALE
-...
+(riassunto in paragrafi continui, seguendo l'ordine originale del documento)
 
-## 📚 ARGOMENTI E SOTTO-ARGOMENTI
-...
-
-## ⚠️ TENSIONI, CONTRADDIZIONI E PUNTI DEBOLI
-...
-
-## 🔗 POTENZIALI CONNESSIONI CON WIKI ESISTENTE
-...
+---
 
 ## 🗨️ DISCUSSIONE SOCRATICA
+
 (Lascia vuoto)
+
+---
 
 ## ✅ IL MIO SAPERE
+
 (Lascia vuoto)
 
-NON inserire evidenziazioni.
+IMPORTANTE: NON inserire evidenziazioni >...< nel testo. L'utente le aggiungerà manualmente dopo.
 """}]
+    
     risposta = call_llm(build_system(), msg)
     full = f"""---
 stato: BOZZA
@@ -1068,8 +1084,14 @@ Rispondi SOLO con il riassunto, in italiano."""
     stato["fase"] = "COMPLETATA"
     save_stato(stato)
 
+# ============================================================
+# COMANDO PROMUOVI (MODIFICATO - VERSIONAMENTO + WIKILINK)
+# ============================================================
+
 def cmd_promuovi(titolo: str):
-    """Promuove il sandbox a pagina wiki (esclude DISCUSSIONE SOCRATICA)"""
+    """Promuove il sandbox a pagina wiki (esclude DISCUSSIONE SOCRATICA)
+    - Se la pagina esiste già, crea una nuova versione con wikilink all'originale
+    """
     stato = load_stato()
     if not stato.get("file_corrente"):
         print(f"{Colors.RED}❌ Nessun file sandbox attivo. Esegui /ingest prima.{Colors.END}")
@@ -1083,11 +1105,8 @@ def cmd_promuovi(titolo: str):
 
     contenuto_sandbox = read_file_safe(sandbox_path)
 
-    # Estrai solo le sezioni desiderate (escludendo DISCUSSIONE SOCRATICA)
+    # Estrai solo le sezioni desiderate
     sintesi_esaustiva = estrai_sezione(contenuto_sandbox, r'# 📌 SINTESI ESAUSTIVA')
-    tesi_centrale = estrai_sezione(contenuto_sandbox, r'## 🎯 TESI CENTRALE')
-    argomenti = estrai_sezione(contenuto_sandbox, r'## 📚 ARGOMENTI E SOTTO-ARGOMENTI')
-    tensioni = estrai_sezione(contenuto_sandbox, r'## ⚠️ TENSIONI, CONTRADDIZIONI E PUNTI DEBOLI')
     il_mio_sapere = estrai_sezione(contenuto_sandbox, r'## ✅ IL MIO SAPERE')
 
     if not il_mio_sapere:
@@ -1096,6 +1115,43 @@ def cmd_promuovi(titolo: str):
         cmd_fine()
         contenuto_sandbox = read_file_safe(sandbox_path)
         il_mio_sapere = estrai_sezione(contenuto_sandbox, r'## ✅ IL MIO SAPERE')
+
+    # VERIFICA SE LA PAGINA ESISTE GIÀ
+    slug_base = titolo.lower().replace(" ", "_").replace("-", "_")
+    wiki_path_base = WIKI / f"{slug_base}.md"
+    
+    titolo_finale = titolo
+    wikilink_originale = None
+    
+    if wiki_path_base.exists():
+        # La pagina esiste già → crea una nuova versione
+        data_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # Trova il prossimo numero di versione
+        versioni_esistenti = list(WIKI.glob(f"{slug_base}_v*.md")) + list(WIKI.glob(f"{slug_base}_*.md"))
+        if versioni_esistenti:
+            numeri = []
+            for v in versioni_esistenti:
+                match = re.search(r'_v(\d+)', v.name)
+                if match:
+                    numeri.append(int(match.group(1)))
+            prossimo_numero = max(numeri) + 1 if numeri else 2
+            titolo_finale = f"{titolo} v{prossimo_numero}"
+            slug_finale = f"{slug_base}_v{prossimo_numero}"
+        else:
+            titolo_finale = f"{titolo} ({data_str})"
+            slug_finale = f"{slug_base}_{data_str.replace('-', '')}"
+        
+        wiki_path = WIKI / f"{slug_finale}.md"
+        wikilink_originale = titolo  # Per il link alla versione originale
+        
+        print(f"{Colors.YELLOW}⚠️ Pagina '{titolo}' già esistente.{Colors.END}")
+        print(f"   Creerò una nuova versione: '{titolo_finale}'")
+        print(f"   Con wikilink alla versione originale: [[{titolo}]]")
+        print()
+    else:
+        wiki_path = wiki_path_base
+        titolo_finale = titolo
 
     # Proposta dominio/tipo
     print(f"{Colors.CYAN}🤖 Analizzo il contenuto per proporre dominio e tipo...{Colors.END}")
@@ -1126,18 +1182,22 @@ Rispondi SOLO in formato JSON:
         dominio_proposto = "Generale"
         tipo_proposto = "articolo"
 
-    # Ricerca wikilink
+    # Ricerca wikilink (escludendo la pagina originale se presente)
     print(f"{Colors.CYAN}🔍 Cerco pagine wiki correlate...{Colors.END}")
     wiki_pages = {}
     for f in WIKI.glob("*.md"):
-        if f.name not in ["index.md", "log.md"]:
-            wiki_pages[f.stem] = read_file_safe(f)[:1000]
+        if f.name in ["index.md", "log.md", ".indice_wiki.json"]:
+            continue
+        if wiki_path_base.exists() and f.stem == slug_base:
+            continue
+        wiki_pages[f.stem] = read_file_safe(f)[:1000]
+    
     collegamenti_trovati = []
     if wiki_pages:
         prompt_link = f"""Elenco pagine wiki esistenti (nome e inizio contenuto):
 {chr(10).join([f"- [[{nome}]]: {testo[:200]}" for nome, testo in wiki_pages.items()])}
 
-Nuova pagina in creazione: "{titolo}"
+Nuova pagina in creazione: "{titolo_finale}"
 Riassunto finale: {il_mio_sapere[:1000]}
 
 Quali di queste pagine sono semanticamente correlate? Per ognuna, spiega brevemente perché.
@@ -1157,7 +1217,9 @@ Massimo 5.
     print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
     print(f"{Colors.BOLD}📝 CREAZIONE NUOVA PAGINA WIKI{Colors.END}")
     print(f"{Colors.BLUE}{'='*60}{Colors.END}\n")
-    print(f"{Colors.GREEN}Titolo:{Colors.END} {titolo}")
+    print(f"{Colors.GREEN}Titolo:{Colors.END} {titolo_finale}")
+    if wikilink_originale:
+        print(f"{Colors.CYAN}🔗 Link alla versione originale: [[{wikilink_originale}]]{Colors.END}")
 
     # Scelta dominio
     print(f"\n{Colors.YELLOW}📌 Scegli il DOMINIO:{Colors.END}")
@@ -1203,7 +1265,7 @@ Massimo 5.
     # Mostra frontmatter
     print(f"\n{Colors.BLUE}{'─'*40}{Colors.END}")
     print(f"{Colors.BOLD}📄 Frontmatter:{Colors.END}")
-    print(f"  titolo: {titolo}")
+    print(f"  titolo: {titolo_finale}")
     print(f"  dominio: {dominio_finale}")
     print(f"  tipo: {tipo_finale}")
     print(f"  stato: attivo")
@@ -1218,8 +1280,8 @@ Massimo 5.
         sys.stdout.flush()
         return
     elif conferma == 'modifica':
-        nuovo_titolo = input(f"Titolo ({titolo}): ").strip()
-        if nuovo_titolo: titolo = nuovo_titolo
+        nuovo_titolo = input(f"Titolo ({titolo_finale}): ").strip()
+        if nuovo_titolo: titolo_finale = nuovo_titolo
         nuovo_dominio = input(f"Dominio ({dominio_finale}): ").strip()
         if nuovo_dominio: dominio_finale = nuovo_dominio
         nuovo_tipo = input(f"Tipo ({tipo_finale}): ").strip()
@@ -1227,20 +1289,26 @@ Massimo 5.
 
     # Scelta wikilink
     collegamenti_scelti = []
+    if wikilink_originale:
+        collegamenti_scelti.append(wikilink_originale)
+        print(f"{Colors.CYAN}🔗 Wikilink automatico aggiunto: [[{wikilink_originale}]]{Colors.END}")
+    
     if collegamenti_trovati:
-        print(f"\n{Colors.CYAN}🔗 Pagine wiki correlate trovate:{Colors.END}")
-        for i, link in enumerate(collegamenti_trovati, 1):
-            print(f"  {i}. [[{link['pagina']}]] — {link.get('ragione', 'correlata')}")
-        print(f"  {len(collegamenti_trovati)+1}. Nessuno")
-        scelta_link = input(f"{Colors.YELLOW}👉 Numeri da mantenere (es. 1,3,5) o invio: {Colors.END}").strip()
-        if scelta_link:
-            indici = re.findall(r'\d+', scelta_link)
-            for idx in indici:
-                num = int(idx)
-                if 1 <= num <= len(collegamenti_trovati):
-                    collegamenti_scelti.append(collegamenti_trovati[num-1]['pagina'])
+        altri_link = [l for l in collegamenti_trovati if l['pagina'] != wikilink_originale]
+        if altri_link:
+            print(f"\n{Colors.CYAN}🔗 Altre pagine wiki correlate trovate:{Colors.END}")
+            for i, link in enumerate(altri_link, 1):
+                print(f"  {i}. [[{link['pagina']}]] — {link.get('ragione', 'correlata')}")
+            print(f"  {len(altri_link)+1}. Nessuno")
+            scelta_link = input(f"{Colors.YELLOW}👉 Numeri da mantenere (es. 1,3,5) o invio: {Colors.END}").strip()
+            if scelta_link:
+                indici = re.findall(r'\d+', scelta_link)
+                for idx in indici:
+                    num = int(idx)
+                    if 1 <= num <= len(altri_link):
+                        collegamenti_scelti.append(altri_link[num-1]['pagina'])
     else:
-        aggiungi_manuale = input(f"{Colors.CYAN}Vuoi aggiungere collegamenti manualmente? (s/n): {Colors.END}").lower()
+        aggiungi_manuale = input(f"{Colors.CYAN}Vuoi aggiungere altri collegamenti manualmente? (s/n): {Colors.END}").lower()
         if aggiungi_manuale == 's':
             while True:
                 manuale = input(f"Nome pagina wiki (vuoto per finire): ").strip()
@@ -1252,7 +1320,7 @@ Massimo 5.
     
     # Costruisci il contenuto del wiki (SENZA DISCUSSIONE SOCRATICA)
     wiki_content = f"""---
-titolo: {titolo}
+titolo: {titolo_finale}
 dominio: {dominio_finale}
 tipo: {tipo_finale}
 stato: attivo
@@ -1265,18 +1333,6 @@ fonti: {fonti_str}
 
 {sintesi_esaustiva}
 
-## 🎯 TESI CENTRALE
-
-{tesi_centrale}
-
-## 📚 ARGOMENTI E SOTTO-ARGOMENTI
-
-{argomenti}
-
-## ⚠️ TENSIONI, CONTRADDIZIONI E PUNTI DEBOLI
-
-{tensioni}
-
 ## ✅ IL MIO SAPERE
 
 {il_mio_sapere}
@@ -1285,14 +1341,19 @@ fonti: {fonti_str}
 
 {wikilink_list}
 """
-    slug = titolo.lower().replace(" ", "_").replace("-", "_")
-    wiki_path = WIKI / f"{slug}.md"
+    slug_finale = titolo_finale.lower().replace(" ", "_").replace("-", "_")
+    wiki_path = WIKI / f"{slug_finale}.md"
     write_file_safe(wiki_path, wiki_content)
 
     with INDEX.open("a", encoding='utf-8') as f:
-        f.write(f"| [[{titolo}]] | {dominio_finale} | {tipo_finale} | {date.today()} |\n")
+        f.write(f"| [[{titolo_finale}]] | {dominio_finale} | {tipo_finale} | {date.today()} |\n")
     with LOG.open("a", encoding='utf-8') as f:
-        f.write(f"\n## [{date.today()}] promuovi | {titolo}\n- File sandbox: {stato['file_corrente']}\n- Cicli SPB: {cicli_spb}\n- Pagina wiki: {wiki_path.name}\n")
+        f.write(f"\n## [{date.today()}] promuovi | {titolo_finale}\n")
+        f.write(f"- File sandbox: {stato['file_corrente']}\n")
+        f.write(f"- Cicli SPB: {cicli_spb}\n")
+        f.write(f"- Pagina wiki: {wiki_path.name}\n")
+        if wikilink_originale:
+            f.write(f"- Wikilink a versione originale: [[{wikilink_originale}]]\n")
 
     print(f"\n{Colors.GREEN}✅ Pagina wiki creata: {wiki_path}{Colors.END}")
     print(f"{Colors.GREEN}✅ Indice e log aggiornati.{Colors.END}")
@@ -1538,7 +1599,8 @@ def print_banner():
 
 {Colors.BLUE}💡 >argomento< nel file, poi /chat. /salva genera riassunto narrativo tecnico.{Colors.END}
 {Colors.BLUE}💡 /analizza offre: 1. Ingest (chunk → sandbox), 2. Traduci (traduci → raggruppa → ingest chunk){Colors.END}
-{Colors.BLUE}💡 /promuovi crea pagina wiki con SINTESI, TESI, ARGOMENTI, TENSIONI, IL MIO SAPERE (esclude DISCUSSIONE SOCRATICA){Colors.END}
+{Colors.BLUE}💡 /promuovi crea pagina wiki con SINTESI ESAUSTIVA + IL MIO SAPERE (esclude DISCUSSIONE SOCRATICA){Colors.END}
+{Colors.BLUE}💡 /promuovi con pagina esistente crea nuova versione (es. Titolo v2) con wikilink all'originale{Colors.END}
 {Colors.BLUE}💡 /query cerca prima nel wiki (con indice), poi online con Brave API. Marca [WIKI] e [WEB].{Colors.END}
 {Colors.BLUE}💡 In /chat: /salta (salta evidenziazione), /pausa (salva sessione){Colors.END}
 """)
