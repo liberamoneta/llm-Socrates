@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-wiki.py — Sistema Socrates–Plato–Bayes (SPB) - Versione definitiva
+wiki.py — Sistema Socrates–Plato–Bayes (SPB) - Versione Definitiva
 """
 
 import os
@@ -38,6 +38,10 @@ def print_wrapped(text, color=Colors.CYAN, prefix="🤖 "):
     wrapped = textwrap.fill(text, width=width)
     print(f"\n{color}{prefix}{wrapped}{Colors.END}")
 
+# ============================================================
+# COSTANTI
+# ============================================================
+
 ASSET = Path("asset")
 CLIPPINGS = Path("clippings")
 BACKUPS = Path("backups")
@@ -50,6 +54,9 @@ INDEX = WIKI / "index.md"
 LOG = WIKI / "log.md"
 AGENT_MD = Path("agent.md")
 STATE_FILE = SANDBOX / ".stato_spb.json"
+GLOSSARIO_PATH = RAW / "glossario.json"
+CHECKPOINT_PATH = SANDBOX / ".checkpoint.json"
+INDICE_PATH = WIKI / ".indice_wiki.json"
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 if not DEEPSEEK_API_KEY:
@@ -57,7 +64,23 @@ if not DEEPSEEK_API_KEY:
     sys.exit(1)
 
 CLIENT = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-MODEL = "deepseek-chat"
+
+# Modelli DeepSeek V4
+DEEPSEEK_FLASH = "deepseek-v4-flash"
+DEEPSEEK_PRO = "deepseek-v4-pro"
+
+# Modello predefinito (cambia qui tra FLASH e PRO)
+CURRENT_MODEL = DEEPSEEK_PRO
+
+# Dimensione chunk per traduzione e ingest
+CHUNK_SIZE = 1500
+
+# Brave Search API
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY")
+
+# ============================================================
+# FUNZIONI DI UTILITÀ
+# ============================================================
 
 def init_vault():
     for d in [ASSET, CLIPPINGS, BACKUPS, RAW, WIKI, SANDBOX, ARCHIVIATI]:
@@ -100,17 +123,25 @@ def reset_stato():
 def read_agent_md() -> str:
     return read_file_safe(AGENT_MD) if AGENT_MD.exists() else "(agent.md non trovato)"
 
-def call_llm(system: str, messages: list, allow_search: bool = False) -> str:
-    """Chiamata LLM con supporto opzionale per ricerca esterna"""
+def update_log(operation, details):
+    """Aggiorna log.md"""
+    today = datetime.now().strftime("%Y-%m-%d %H:%M")
+    log_entry = f"## [{today}] {operation}\n{details}\n\n"
+    with open(LOG, 'a', encoding='utf-8') as f:
+        f.write(log_entry)
+
+def call_llm(system: str, messages: list, allow_search: bool = False, model: str = None) -> str:
+    """Chiamata LLM con supporto opzionale per ricerca esterna e selezione modello"""
     try:
         if allow_search:
-            print(f"{Colors.DIM}🔍 Ricerca esterna abilitata (LLM può cercare online)...{Colors.END}", flush=True)
+            print(f"{Colors.DIM}🔍 Ricerca esterna abilitata...{Colors.END}", flush=True)
         
-        print(f"{Colors.DIM}🤖 Chiamata DeepSeek...{Colors.END}", flush=True)
+        model_to_use = model if model else CURRENT_MODEL
+        print(f"{Colors.DIM}🤖 Chiamata DeepSeek ({model_to_use})...{Colors.END}", flush=True)
         response = CLIENT.chat.completions.create(
-            model=MODEL,
+            model=model_to_use,
             messages=[{"role": "system", "content": system}, *messages],
-            max_tokens=4000, temperature=0.7
+            max_tokens=8000, temperature=0.7
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -134,14 +165,480 @@ Mantieni un tono colloquiale ma rigoroso.
 def estrai_evidenziazioni(contenuto: str) -> list:
     return re.findall(r'>([^<]+)<', contenuto)
 
-def web_search_simulated(query: str) -> str:
-    """Simula una ricerca web (da espandere con API reali)"""
-    # Placeholder - da implementare con API reali (Google, Brave, ecc.)
-    return f"[RISULTATO RICERCA per '{query}']: Questo è un risultato simulato. In produzione, integrare con API di ricerca."
+def estrai_sezione(contenuto: str, pattern: str) -> str:
+    """Estrae una sezione dal markdown usando un pattern regex"""
+    match = re.search(pattern + r'\n\n(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
+    return match.group(1).strip() if match else ""
 
-# --------------------------------------------------------------
-# COMANDI
-# --------------------------------------------------------------
+# ============================================================
+# GLOSSARIO TERMINOLOGICO
+# ============================================================
+
+def carica_glossario() -> dict:
+    """Carica il glossario terminologico"""
+    if GLOSSARIO_PATH.exists():
+        try:
+            return json.loads(read_file_safe(GLOSSARIO_PATH))
+        except:
+            return {}
+    return {}
+
+def salva_glossario(glossario: dict):
+    """Salva il glossario terminologico"""
+    write_file_safe(GLOSSARIO_PATH, json.dumps(glossario, ensure_ascii=False, indent=2))
+
+def aggiorna_glossario_da_chunk(chunk_testo: str, traduzione: str):
+    """Aggiorna il glossario con termini rilevanti dal chunk tradotto"""
+    glossario = carica_glossario()
+    # Estrai termini in maiuscolo o tra asterischi come possibili termini tecnici
+    termini_originali = re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)*)\b|`([^`]+)`|\*([^*]+)\*', chunk_testo)
+    for t in termini_originali:
+        termine = t[0] or t[1] or t[2]
+        if termine and len(termine) > 3 and termine.lower() not in glossario:
+            glossario[termine.lower()] = {
+                "originale": termine,
+                "traduzione": "",
+                "ultimo_aggiornamento": datetime.now().isoformat()
+            }
+    salva_glossario(glossario)
+
+# ============================================================
+# CHECKPOINT E ROLLBACK
+# ============================================================
+
+def salva_checkpoint(operazione: str, file_corrente: str, stato: dict):
+    """Salva checkpoint dell'operazione in corso"""
+    checkpoint = {
+        "operazione": operazione,
+        "file_corrente": file_corrente,
+        "stato": stato,
+        "timestamp": datetime.now().isoformat()
+    }
+    write_file_safe(CHECKPOINT_PATH, json.dumps(checkpoint, ensure_ascii=False, indent=2))
+
+def carica_checkpoint() -> dict:
+    """Carica l'ultimo checkpoint"""
+    if CHECKPOINT_PATH.exists():
+        try:
+            return json.loads(read_file_safe(CHECKPOINT_PATH))
+        except:
+            return {}
+    return {}
+
+def ripulisci_file_orfani():
+    """Pulisce file temporanei orfani all'avvio"""
+    # Cerca chunk temporanei in raw/ senza sandbox corrispondente
+    for chunk_file in RAW.glob("*_chunk*.md"):
+        sb_name = chunk_file.name.replace(".md", "_V1.md")
+        sb_name = f"sdbx_{sb_name}"
+        if not (SANDBOX / sb_name).exists():
+            print(f"{Colors.DIM}🧹 Rimozione file orfano: {chunk_file.name}{Colors.END}")
+            chunk_file.unlink()
+    
+    # Pulisci checkpoint vecchi (>24 ore)
+    if CHECKPOINT_PATH.exists():
+        try:
+            checkpoint = json.loads(read_file_safe(CHECKPOINT_PATH))
+            timestamp = datetime.fromisoformat(checkpoint.get("timestamp", ""))
+            if (datetime.now() - timestamp).days > 0:
+                CHECKPOINT_PATH.unlink()
+        except:
+            pass
+
+# ============================================================
+# INDICE LEGGERO PER /query
+# ============================================================
+
+def costruisci_indice():
+    """Costruisce un indice leggero del wiki (titolo→dominio→tags)"""
+    indice = {}
+    for f in WIKI.glob("*.md"):
+        if f.name in ["index.md", "log.md", ".indice_wiki.json"]:
+            continue
+        contenuto = read_file_safe(f)
+        
+        # Estrai frontmatter
+        frontmatter = {}
+        fm_match = re.search(r'^---\n(.*?)\n---', contenuto, re.DOTALL)
+        if fm_match:
+            for line in fm_match.group(1).split('\n'):
+                if ':' in line:
+                    key, val = line.split(':', 1)
+                    frontmatter[key.strip()] = val.strip()
+        
+        indice[f.stem] = {
+            "percorso": str(f),
+            "dominio": frontmatter.get("dominio", "Generale"),
+            "tipo": frontmatter.get("tipo", "analisi"),
+            "data": frontmatter.get("data_promozione", ""),
+            "tags": frontmatter.get("tags", "").split(',')
+        }
+    
+    write_file_safe(INDICE_PATH, json.dumps(indice, ensure_ascii=False, indent=2))
+    return indice
+
+def cerca_nel_wiki(domanda: str) -> list:
+    """Cerca nel wiki usando l'indice leggero"""
+    if not INDICE_PATH.exists():
+        costruisci_indice()
+    
+    try:
+        indice = json.loads(read_file_safe(INDICE_PATH))
+    except:
+        return []
+    
+    parole_domanda = set(domanda.lower().split())
+    punteggi = []
+    
+    for titolo, info in indice.items():
+        score = 0
+        # Match con dominio
+        if info["dominio"].lower() in domanda.lower():
+            score += 3
+        # Match con tags
+        for tag in info.get("tags", []):
+            if tag.strip().lower() in parole_domanda:
+                score += 2
+        # Match con titolo
+        if titolo.lower() in domanda.lower():
+            score += 1
+        if score > 0:
+            punteggi.append((score, titolo, info["percorso"]))
+    
+    punteggi.sort(reverse=True)
+    return punteggi[:3]
+
+# ============================================================
+# RICERCA WEB (Brave Search API + DuckDuckGo fallback)
+# ============================================================
+
+def web_search_brave(query: str, num_results: int = 5) -> list:
+    """Cerca online usando Brave Search API"""
+    if not BRAVE_API_KEY:
+        return web_search_duckduckgo(query, num_results)
+    
+    try:
+        import requests
+        
+        url = "https://api.search.brave.com/res/v1/web/search"
+        params = {"q": query, "count": num_results, "text_decorations": False}
+        headers = {"Accept": "application/json", "X-Subscription-Token": BRAVE_API_KEY}
+        
+        print(f"{Colors.DIM}🌐 Ricerca Brave: {query}{Colors.END}", flush=True)
+        
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        results = []
+        for item in data.get("web", {}).get("results", []):
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("description", "")
+            })
+        return results
+        
+    except Exception as e:
+        print(f"{Colors.YELLOW}⚠️ Errore Brave API: {e}. Fallback a DuckDuckGo.{Colors.END}")
+        return web_search_duckduckgo(query, num_results)
+
+def web_search_duckduckgo(query: str, num_results: int = 5) -> list:
+    """Fallback: cerca online usando DuckDuckGo HTML"""
+    import urllib.parse
+    import urllib.request
+    from html.parser import HTMLParser
+    
+    class DDGParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.results = []
+            self.current = {}
+            self.in_link = False
+            self.in_title = False
+            self.in_snippet = False
+            self.link_url = ""
+        
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a' and not self.in_link:
+                for attr, value in attrs:
+                    if attr == 'href' and value.startswith('/url?q='):
+                        self.in_link = True
+                        url_match = re.search(r'/url\?q=([^&]+)', value)
+                        if url_match:
+                            self.link_url = urllib.parse.unquote(url_match.group(1))
+                        break
+            elif tag == 'h3' and self.in_link:
+                self.in_title = True
+            elif tag == 'div' and self.in_link:
+                for attr, value in attrs:
+                    if attr == 'class' and 's' in value:
+                        self.in_snippet = True
+                        break
+        
+        def handle_endtag(self, tag):
+            if tag == 'a' and self.in_link:
+                self.in_link = False
+                if self.link_url and self.current.get('title'):
+                    self.results.append({
+                        'title': self.current.get('title', ''),
+                        'url': self.link_url,
+                        'snippet': self.current.get('snippet', '')
+                    })
+                    self.current = {}
+                self.link_url = ""
+            elif tag == 'h3':
+                self.in_title = False
+            elif tag == 'div':
+                self.in_snippet = False
+        
+        def handle_data(self, data):
+            if self.in_title:
+                self.current['title'] = data.strip()
+            elif self.in_snippet:
+                if 'snippet' not in self.current:
+                    self.current['snippet'] = data.strip()
+                else:
+                    self.current['snippet'] += ' ' + data.strip()
+    
+    try:
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        
+        print(f"{Colors.DIM}🌐 Ricerca DuckDuckGo (fallback): {query}{Colors.END}", flush=True)
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8')
+            parser = DDGParser()
+            parser.feed(html)
+            return parser.results[:num_results]
+            
+    except Exception as e:
+        print(f"{Colors.DIM}⚠️ Errore DuckDuckGo: {e}{Colors.END}", flush=True)
+        return []
+
+# ============================================================
+# COMANDI: ANALIZZA
+# ============================================================
+
+def cmd_analizza(filepath: str):
+    """Analizza un file e propone opzioni: 1. Ingest, 2. Traduci, 3. Annulla"""
+    src = CLIPPINGS / filepath
+    if not src.exists():
+        src = RAW / filepath
+        if not src.exists():
+            print(f"{Colors.RED}❌ File non trovato in clippings/ o raw/: {filepath}{Colors.END}")
+            sys.stdout.flush()
+            return
+    
+    contenuto = read_file_safe(src)
+    caratteri = len(contenuto)
+    parole = len(contenuto.split())
+    righe = len(contenuto.splitlines())
+    pagine = round(parole / 300, 1)
+    num_chunk = (parole // CHUNK_SIZE) + (1 if parole % CHUNK_SIZE > 0 else 0)
+    
+    if parole <= CHUNK_SIZE:
+        strategia = "OTTIMALE"
+        colore = Colors.GREEN
+        suggerimento = f"Il file è ottimale (≤{CHUNK_SIZE} parole)."
+    elif parole <= 5000:
+        strategia = "LIMITE"
+        colore = Colors.YELLOW
+        suggerimento = f"Il file è lungo ({parole} parole). Consiglio di suddividerlo in chunk da {CHUNK_SIZE} parole."
+    else:
+        strategia = "TROPPO LUNGO"
+        colore = Colors.RED
+        suggerimento = f"Il file è troppo lungo ({parole} parole). Deve essere suddiviso in {num_chunk} chunk da {CHUNK_SIZE} parole."
+    
+    print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
+    print(f"{Colors.BOLD}📊 ANALISI FILE: {src.name}{Colors.END}")
+    print(f"{Colors.BLUE}{'='*60}{Colors.END}\n")
+    
+    print(f"{Colors.CYAN}📏 Dimensioni:{Colors.END}")
+    print(f"   - Parole: {parole}")
+    print(f"   - Caratteri: {caratteri}")
+    print(f"   - Righe: {righe}")
+    print(f"   - Pagine stimate: {pagine}\n")
+    
+    print(f"{Colors.CYAN}📋 Valutazione:{Colors.END}")
+    print(f"   - Soglia SPB: {CHUNK_SIZE} parole")
+    print(f"   - Chunk necessari: {num_chunk}")
+    print(f"   - Stato: {colore}{strategia}{Colors.END}")
+    print(f"   - {suggerimento}\n")
+    
+    print(f"{Colors.YELLOW}📌 Opzioni disponibili:{Colors.END}")
+    print(f"   1. Ingest (suddivide in chunk, ingerisce ogni chunk, crea sandbox)")
+    print(f"   2. Traduci (traduce in italiano, raggruppa in raw/nome_it.md, poi ingest a chunk)")
+    print(f"   3. Annulla")
+    
+    scelta = input(f"\n{Colors.CYAN}👉 Scegli opzione (1-3): {Colors.END}").strip()
+    
+    if scelta == "1":
+        ingest_chunk(src, contenuto, parole)
+    elif scelta == "2":
+        traduci_ingest_chunk(src, contenuto, parole)
+    else:
+        print(f"{Colors.RED}❌ Operazione annullata.{Colors.END}")
+    
+    sys.stdout.flush()
+
+def ingest_chunk(src: Path, contenuto: str, parole_totali: int):
+    """Opzione 1: Suddivide in chunk, ingerisce ogni chunk, crea sandbox"""
+    print(f"\n{Colors.CYAN}📥 Ingest a chunk di {src.name}{Colors.END}")
+    
+    num_chunk = (parole_totali // CHUNK_SIZE) + (1 if parole_totali % CHUNK_SIZE > 0 else 0)
+    print(f"   {num_chunk} chunk da ingerire separatamente\n")
+    
+    # Assicura che il file sia in raw/
+    if src.parent != RAW:
+        dest = RAW / src.name
+        shutil.move(str(src), str(dest))
+        print(f"{Colors.GREEN}✅ Spostato in raw/{src.name}{Colors.END}")
+        src = dest
+    
+    parole_lista = contenuto.split()
+    sandbox_creati = []
+    
+    for i in range(num_chunk):
+        start = i * CHUNK_SIZE
+        end = min((i + 1) * CHUNK_SIZE, parole_totali)
+        chunk_testo = " ".join(parole_lista[start:end])
+        
+        chunk_filename = f"{src.stem}_chunk{i+1}.md"
+        chunk_path = RAW / chunk_filename
+        write_file_safe(chunk_path, chunk_testo)
+        print(f"{Colors.DIM}📄 Chunk {i+1}/{num_chunk} salvato: {chunk_filename}{Colors.END}")
+        
+        print(f"{Colors.DIM}🤖 Ingest chunk {i+1}/{num_chunk}...{Colors.END}")
+        cmd_ingest(chunk_filename)
+        sandbox_creati.append(f"sdbx_{src.stem}_chunk{i+1}_V1.md")
+        print()
+    
+    # Pulisci i file chunk temporanei
+    for i in range(num_chunk):
+        chunk_file = RAW / f"{src.stem}_chunk{i+1}.md"
+        if chunk_file.exists():
+            chunk_file.unlink()
+    
+    print(f"\n{Colors.GREEN}✅ Ingest completato. {num_chunk} sandbox creati:{Colors.END}")
+    for sb in sandbox_creati:
+        print(f"   - {sb}")
+    print(f"\n{Colors.CYAN}💡 Ora puoi usare /chat su ogni file sandbox.{Colors.END}")
+    update_log("ingest_chunk", f"File: {src.name}\nChunk: {num_chunk}\nSandbox: {', '.join(sandbox_creati)}")
+
+def traduci_ingest_chunk(src: Path, contenuto: str, parole_totali: int):
+    """Opzione 2: Traduce, raggruppa in raw/nome_it.md, poi ingest a chunk"""
+    print(f"\n{Colors.CYAN}📖 Traduzione di {src.name}{Colors.END}")
+    
+    # Carica glossario per coerenza terminologica
+    glossario = carica_glossario()
+    glossario_prompt = ""
+    if glossario:
+        glossario_prompt = "\n\nGLOSSARIO TERMINI TECNICI (da mantenere coerenti):\n"
+        for termine, info in glossario.items():
+            if info.get("traduzione"):
+                glossario_prompt += f"- {info.get('originale', termine)} → {info['traduzione']}\n"
+            else:
+                glossario_prompt += f"- {termine} → (da tradurre coerentemente)\n"
+    
+    num_chunk = (parole_totali // CHUNK_SIZE) + (1 if parole_totali % CHUNK_SIZE > 0 else 0)
+    print(f"   Parole totali: {parole_totali}")
+    print(f"   Chunk da tradurre: {num_chunk}\n")
+    
+    conferma = input(f"{Colors.YELLOW}✅ Procedere con la traduzione? (s/n): {Colors.END}").lower()
+    if conferma != 's':
+        print(f"{Colors.RED}❌ Operazione annullata.{Colors.END}")
+        return
+    
+    parole_lista = contenuto.split()
+    chunk_traduzioni = []
+    
+    for i in range(num_chunk):
+        start = i * CHUNK_SIZE
+        end = min((i + 1) * CHUNK_SIZE, parole_totali)
+        chunk_testo = " ".join(parole_lista[start:end])
+        
+        print(f"{Colors.DIM}🤖 Traduzione chunk {i+1}/{num_chunk}...{Colors.END}")
+        
+        prompt = f"""Traduci il seguente testo dall'inglese all'italiano.
+{glossario_prompt}
+
+REGOLE:
+1. Mantieni la struttura markdown
+2. Preserva i wikilink [[...]] e i link esterni
+3. Traduci in modo naturale
+4. Mantieni i termini tecnici in inglese se consolidati
+5. Usa il glossario fornito per mantenere coerenza terminologica
+
+TESTO:
+{chunk_testo[:8000]}
+
+Rispondi SOLO con il testo tradotto."""
+        
+        msg = [{"role": "user", "content": prompt}]
+        tradotto = call_llm(build_system(), msg, model=DEEPSEEK_FLASH)
+        chunk_traduzioni.append(tradotto)
+        
+        # Aggiorna glossario
+        aggiorna_glossario_da_chunk(chunk_testo, tradotto)
+        print(f"{Colors.GREEN}   ✅ Chunk {i+1}/{num_chunk} tradotto{Colors.END}")
+    
+    # Raggruppa i chunk tradotti in un unico file
+    testo_tradotto = "\n\n---\n\n".join(chunk_traduzioni)
+    out_name = f"{src.stem}_it.md"
+    out_file = RAW / out_name
+    write_file_safe(out_file, testo_tradotto)
+    
+    print(f"\n{Colors.GREEN}✅ Traduzione completata. File raggruppato: {out_file}{Colors.END}")
+    
+    # Ora fai ingest del file tradotto
+    print(f"\n{Colors.CYAN}📥 Ingest del file tradotto a chunk...{Colors.END}")
+    
+    contenuto_tradotto = read_file_safe(out_file)
+    parole_tradotte = len(contenuto_tradotto.split())
+    
+    num_chunk_tradotto = (parole_tradotte // CHUNK_SIZE) + (1 if parole_tradotte % CHUNK_SIZE > 0 else 0)
+    print(f"   {num_chunk_tradotto} chunk da ingerire\n")
+    
+    parole_lista_tradotto = contenuto_tradotto.split()
+    sandbox_creati = []
+    
+    for i in range(num_chunk_tradotto):
+        start = i * CHUNK_SIZE
+        end = min((i + 1) * CHUNK_SIZE, parole_tradotte)
+        chunk_testo = " ".join(parole_lista_tradotto[start:end])
+        
+        chunk_filename = f"{src.stem}_chunk{i+1}_it.md"
+        chunk_path = RAW / chunk_filename
+        write_file_safe(chunk_path, chunk_testo)
+        print(f"{Colors.DIM}📄 Chunk {i+1}/{num_chunk_tradotto} salvato: {chunk_filename}{Colors.END}")
+        
+        print(f"{Colors.DIM}🤖 Ingest chunk {i+1}/{num_chunk_tradotto}...{Colors.END}")
+        cmd_ingest(chunk_filename)
+        sandbox_creati.append(f"sdbx_{src.stem}_chunk{i+1}_it_V1.md")
+        print()
+    
+    # Pulisci i file chunk temporanei
+    for i in range(num_chunk_tradotto):
+        chunk_file = RAW / f"{src.stem}_chunk{i+1}_it.md"
+        if chunk_file.exists():
+            chunk_file.unlink()
+    
+    print(f"\n{Colors.GREEN}✅ Ingest completato. {num_chunk_tradotto} sandbox creati:{Colors.END}")
+    for sb in sandbox_creati:
+        print(f"   - {sb}")
+    print(f"\n{Colors.CYAN}💡 Il file tradotto completo è disponibile in: {out_file}{Colors.END}")
+    print(f"{Colors.CYAN}💡 Ora puoi usare /chat su ogni file sandbox.{Colors.END}")
+    update_log("traduci_ingest_chunk", f"File originale: {src.name}\nFile tradotto: {out_name}\nSandbox: {', '.join(sandbox_creati)}")
+
+# ============================================================
+# COMANDI ESISTENTI
+# ============================================================
 
 def cmd_move(filepath: str):
     src = CLIPPINGS / filepath
@@ -184,7 +681,6 @@ def cmd_ingest(filepath: str):
         return
     print(f"{Colors.GREEN}📥 Ingest: {src.name}{Colors.END}")
     testo = read_file_safe(src)
-    # Usa il prefisso sdbx_ per i file sandbox
     out_name = f"sdbx_{src.stem}_V1.md"
     out_file = SANDBOX / out_name
     msg = [{"role":"user","content":f"""Analizza e scrivi riassunto ESAUSTIVO in italiano.
@@ -245,7 +741,6 @@ def cmd_chat(filearg: str = None):
         target_file = filearg.strip()
         if not target_file.endswith(".md"):
             target_file = target_file + ".md"
-        # Assicura che inizi con sdbx_ se necessario
         if not target_file.startswith("sdbx_"):
             target_file = f"sdbx_{target_file}"
         sandbox_path = SANDBOX / target_file
@@ -256,6 +751,26 @@ def cmd_chat(filearg: str = None):
                 print(f"     - {f.name}")
             sys.stdout.flush()
             return
+        
+        # Ripresa da checkpoint se esiste
+        checkpoint = carica_checkpoint()
+        if checkpoint and checkpoint.get("file_corrente") == target_file:
+            print(f"{Colors.YELLOW}⚠️ Trovato checkpoint per questo file. Riprendere?{Colors.END}")
+            riprendi = input(f"{Colors.CYAN}👉 Riprendere? (s/n): {Colors.END}").lower()
+            if riprendi == 's':
+                stato.update(checkpoint.get("stato", {}))
+                stato["file_corrente"] = target_file
+                save_stato(stato)
+                CHECKPOINT_PATH.unlink()
+                print(f"{Colors.GREEN}✅ Stato ripristinato. Riprendo la discussione.{Colors.END}")
+                # Mostra lo stato corrente
+                idx = stato.get("indice", 0)
+                evidenze = stato.get("evidenziazioni", [])
+                if idx < len(evidenze):
+                    print(f"\n{Colors.YELLOW}📌 Riprendo dall'evidenziazione {idx+1}/{len(evidenze)}:{Colors.END}")
+                    print(f"   {Colors.CYAN}{evidenze[idx]}{Colors.END}")
+                chat_libera()
+                return
         
         if stato.get("file_corrente") == target_file and stato.get("fase") == "IN_DISCUSSIONE":
             print(f"{Colors.GREEN}✅ Ripresa discussione su: {target_file}{Colors.END}")
@@ -345,8 +860,10 @@ def avvia_evidenziazione():
     domanda = call_llm(build_system(), msg)
     print(f"\n{Colors.GREEN}📝 DOMANDA:{Colors.END}")
     print_wrapped(domanda, color=Colors.CYAN, prefix="")
-    print(f"\n{Colors.DIM}Dialogo libero (LLM può cercare online se utile). Quando hai la risposta definitiva, usa:{Colors.END}")
+    print(f"\n{Colors.DIM}Dialogo libero. Quando hai la risposta definitiva, usa:{Colors.END}")
     print(f"   {Colors.GREEN}/salva \"la tua risposta\"{Colors.END}")
+    print(f"   {Colors.YELLOW}/salta{Colors.END} per saltare questa evidenziazione")
+    print(f"   {Colors.YELLOW}/pausa{Colors.END} per salvare e uscire")
     sys.stdout.flush()
     stato["domanda_corrente"] = domanda
     stato["evidenziazione_corrente"] = ev
@@ -362,6 +879,35 @@ def chat_libera():
         user_input = input(f"{Colors.GREEN}tu> {Colors.END}").strip()
         if not user_input:
             continue
+        
+        # Comando /salta
+        if user_input.lower() == "/salta":
+            print(f"{Colors.YELLOW}⏭️ Evidenziazione saltata: {ev}{Colors.END}")
+            stato["indice"] += 1
+            stato["domanda_corrente"] = None
+            stato["evidenziazione_corrente"] = None
+            stato["storico_chat"] = []
+            save_stato(stato)
+            if stato["indice"] < len(stato["evidenziazioni"]):
+                avvia_evidenziazione()
+            else:
+                print(f"\n{Colors.GREEN}🎉 Tutte le evidenziazioni discusse/saltate!{Colors.END}")
+            return
+        
+        # Comando /pausa
+        if user_input.lower() == "/pausa":
+            salva_checkpoint("chat", stato.get("file_corrente"), {
+                "indice": stato.get("indice", 0),
+                "evidenziazioni": stato.get("evidenziazioni", []),
+                "storico_chat": stato.get("storico_chat", []),
+                "domanda_corrente": domanda,
+                "evidenziazione_corrente": ev
+            })
+            print(f"{Colors.CYAN}⏸️ Sessione salvata. Usa /chat per riprendere.{Colors.END}")
+            reset_stato()
+            return
+        
+        # Comando /salva
         if user_input.startswith("/salva"):
             match = re.search(r'/salva\s+"([^"]+)"', user_input)
             if not match:
@@ -373,7 +919,6 @@ def chat_libera():
             storico = stato.get("storico_chat", [])
             testo_conv = "\n".join(storico)
             
-            # Genera riassunto narrativo tecnico della conversazione
             if testo_conv.strip():
                 prompt_riassunto = f"""Genera un riassunto NARRATIVO e TECNICO della seguente conversazione socratica.
 
@@ -428,9 +973,13 @@ Rispondi SOLO con il riassunto, in italiano."""
                 print()
                 sys.stdout.flush()
             return
-        elif user_input.lower() == "/abbandono":
-            cmd_abbandono()
+        
+        # Comando /archivia
+        if user_input.lower() == "/archivia":
+            cmd_archivia()
             return
+        
+        # Dialogo normale
         else:
             storico = stato.get("storico_chat", [])
             storico.append(f"Utente: {user_input}")
@@ -447,12 +996,11 @@ Mantieni un tono costruttivo e critico."""}]
             
             risp_llm = call_llm(build_system(enable_search=True), msg_chat)
             
-            # Gestione ricerca simulata (da espandere con API reale)
             if "🔍 RICERCA:" in risp_llm:
                 search_match = re.search(r'🔍 RICERCA:\s*([^\n]+)', risp_llm)
                 if search_match:
                     query = search_match.group(1)
-                    search_result = web_search_simulated(query)
+                    search_result = web_search_brave(query)
                     risp_llm = risp_llm.replace(f"🔍 RICERCA: {query}", f"[Ricerca: {query}]\n{search_result}")
             
             storico.append(f"LLM: {risp_llm}")
@@ -480,7 +1028,6 @@ def cmd_fine():
         sys.stdout.flush()
         return
     
-    # Estrai tutti i riassunti delle evidenziazioni
     riassunti_evidenze = []
     blocchi = re.findall(r'### Evidenziazione \d+: (.+?)\n\*\*Domanda:\*\* (.+?)\n\*\*Riassunto della conversazione:\*\*\n\n(.*?)\n\n\*\*Risposta finale:\*\* (.+?)(?:\n---|$)', contenuto, re.DOTALL)
     for ev, dom, riass, risp in blocchi:
@@ -522,7 +1069,7 @@ Rispondi SOLO con il riassunto, in italiano."""
     save_stato(stato)
 
 def cmd_promuovi(titolo: str):
-    """Promuove il sandbox a pagina wiki, poi lo archivia"""
+    """Promuove il sandbox a pagina wiki (esclude DISCUSSIONE SOCRATICA)"""
     stato = load_stato()
     if not stato.get("file_corrente"):
         print(f"{Colors.RED}❌ Nessun file sandbox attivo. Esegui /ingest prima.{Colors.END}")
@@ -536,16 +1083,19 @@ def cmd_promuovi(titolo: str):
 
     contenuto_sandbox = read_file_safe(sandbox_path)
 
-    # Estrai IL MIO SAPERE
-    match_riassunto = re.search(r'## ✅ IL MIO SAPERE\n\n(.*?)(?=\n##|\n---|\Z)', contenuto_sandbox, re.DOTALL)
-    if not match_riassunto:
+    # Estrai solo le sezioni desiderate (escludendo DISCUSSIONE SOCRATICA)
+    sintesi_esaustiva = estrai_sezione(contenuto_sandbox, r'# 📌 SINTESI ESAUSTIVA')
+    tesi_centrale = estrai_sezione(contenuto_sandbox, r'## 🎯 TESI CENTRALE')
+    argomenti = estrai_sezione(contenuto_sandbox, r'## 📚 ARGOMENTI E SOTTO-ARGOMENTI')
+    tensioni = estrai_sezione(contenuto_sandbox, r'## ⚠️ TENSIONI, CONTRADDIZIONI E PUNTI DEBOLI')
+    il_mio_sapere = estrai_sezione(contenuto_sandbox, r'## ✅ IL MIO SAPERE')
+
+    if not il_mio_sapere:
         print(f"{Colors.YELLOW}⚠️ Sezione 'IL MIO SAPERE' non trovata. Esegui /fine prima di promuovere.{Colors.END}")
         print(f"   Generazione automatica in corso...")
         cmd_fine()
         contenuto_sandbox = read_file_safe(sandbox_path)
-        match_riassunto = re.search(r'## ✅ IL MIO SAPERE\n\n(.*?)(?=\n##|\n---|\Z)', contenuto_sandbox, re.DOTALL)
-    
-    riassunto_finale = match_riassunto.group(1).strip() if match_riassunto else "(nessun riassunto finale trovato)"
+        il_mio_sapere = estrai_sezione(contenuto_sandbox, r'## ✅ IL MIO SAPERE')
 
     # Proposta dominio/tipo
     print(f"{Colors.CYAN}🤖 Analizzo il contenuto per proporre dominio e tipo...{Colors.END}")
@@ -557,7 +1107,7 @@ DOMINI DISPONIBILI: {', '.join(domini_validi)}
 TIPI DISPONIBILI: {', '.join(tipi_validi)}
 
 RIASSUNTO FINALE:
-{riassunto_finale[:1500]}
+{il_mio_sapere[:1500]}
 
 Rispondi SOLO in formato JSON:
 {{"dominio": "uno dei domini", "tipo": "uno dei tipi"}}
@@ -588,7 +1138,7 @@ Rispondi SOLO in formato JSON:
 {chr(10).join([f"- [[{nome}]]: {testo[:200]}" for nome, testo in wiki_pages.items()])}
 
 Nuova pagina in creazione: "{titolo}"
-Riassunto finale: {riassunto_finale[:1000]}
+Riassunto finale: {il_mio_sapere[:1000]}
 
 Quali di queste pagine sono semanticamente correlate? Per ognuna, spiega brevemente perché.
 Restituisci JSON: [{{"pagina": "nome", "ragione": "spiegazione breve"}}, ...]
@@ -650,7 +1200,7 @@ Massimo 5.
     evidenze_risposte = re.findall(r'### Evidenziazione \d+:', contenuto_sandbox)
     cicli_spb = len(evidenze_risposte)
 
-    # Conferma frontmatter
+    # Mostra frontmatter
     print(f"\n{Colors.BLUE}{'─'*40}{Colors.END}")
     print(f"{Colors.BOLD}📄 Frontmatter:{Colors.END}")
     print(f"  titolo: {titolo}")
@@ -698,9 +1248,9 @@ Massimo 5.
                     break
                 collegamenti_scelti.append(manuale)
 
-    # Crea il file wiki (copia esatta del sandbox + frontmatter + collegamenti)
     wikilink_list = "\n".join([f"- [[{link}]]" for link in collegamenti_scelti])
     
+    # Costruisci il contenuto del wiki (SENZA DISCUSSIONE SOCRATICA)
     wiki_content = f"""---
 titolo: {titolo}
 dominio: {dominio_finale}
@@ -711,7 +1261,25 @@ cicli_spb: {cicli_spb}
 fonti: {fonti_str}
 ---
 
-{contenuto_sandbox}
+# 📌 SINTESI ESAUSTIVA
+
+{sintesi_esaustiva}
+
+## 🎯 TESI CENTRALE
+
+{tesi_centrale}
+
+## 📚 ARGOMENTI E SOTTO-ARGOMENTI
+
+{argomenti}
+
+## ⚠️ TENSIONI, CONTRADDIZIONI E PUNTI DEBOLI
+
+{tensioni}
+
+## ✅ IL MIO SAPERE
+
+{il_mio_sapere}
 
 ## Collegamenti
 
@@ -729,7 +1297,7 @@ fonti: {fonti_str}
     print(f"\n{Colors.GREEN}✅ Pagina wiki creata: {wiki_path}{Colors.END}")
     print(f"{Colors.GREEN}✅ Indice e log aggiornati.{Colors.END}")
     
-    # Archivia il file sandbox
+    # Archivia il sandbox
     if sandbox_path.exists():
         arch_path = ARCHIVIATI / sandbox_path.name
         shutil.move(str(sandbox_path), str(arch_path))
@@ -738,6 +1306,9 @@ fonti: {fonti_str}
     print()
     sys.stdout.flush()
     reset_stato()
+    
+    # Aggiorna indice wiki
+    costruisci_indice()
 
 def cmd_riprendi(filename: str):
     """Ripristina un file sandbox archiviato per riprenderne la discussione"""
@@ -774,12 +1345,13 @@ def cmd_riprendi(filename: str):
     print()
     sys.stdout.flush()
 
-def cmd_abbandono():
+def cmd_archivia():
+    """Archivia la discussione corrente"""
     stato = load_stato()
     if stato.get("file_corrente"):
         src = SANDBOX / stato["file_corrente"]
         if src.exists():
-            arch = ARCHIVIATI / f"abbandonato_{src.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            arch = ARCHIVIATI / f"archiviato_{src.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
             shutil.move(str(src), str(arch))
             print(f"{Colors.YELLOW}🗂️ Archiviato: {arch}{Colors.END}")
     reset_stato()
@@ -788,23 +1360,99 @@ def cmd_abbandono():
     sys.stdout.flush()
 
 def cmd_query(domanda: str):
-    wiki_pages = {f.stem: read_file_safe(f)[:2000] for f in WIKI.glob("*.md") if f.name not in ["index.md","log.md"]}
-    if not wiki_pages:
-        print(f"{Colors.YELLOW}⚠️ Wiki vuoto{Colors.END}")
+    """Interroga il wiki usando indice leggero + ricerca web con marcatura fonti"""
+    
+    # FASE 1: Cerca nel wiki con indice leggero
+    pagine_rilevanti = cerca_nel_wiki(domanda)
+    
+    risposta_wiki = None
+    fonti_wiki = []
+    
+    if pagine_rilevanti:
+        ctx = ""
+        for score, titolo, percorso in pagine_rilevanti:
+            contenuto = read_file_safe(Path(percorso))
+            # Estrai solo IL MIO SAPERE e SINTESI
+            sintesi = estrai_sezione(contenuto, r'# 📌 SINTESI ESAUSTIVA')
+            mio_sapere = estrai_sezione(contenuto, r'## ✅ IL MIO SAPERE')
+            ctx += f"### [[{titolo}]]\n"
+            if sintesi:
+                ctx += f"SINTESI: {sintesi[:500]}\n"
+            if mio_sapere:
+                ctx += f"CONCLUSIONI: {mio_sapere[:300]}\n"
+            ctx += "\n"
+            fonti_wiki.append(titolo)
+        
+        msg = [{"role":"user","content":f"Domanda: {domanda}\n\nPagine wiki rilevanti:\n{ctx}\nRispondi in italiano. Se le info sono insufficienti, scrivi 'INFO_INSUFFICIENTI'."}]
+        risposta_wiki = call_llm(build_system(), msg)
+    
+    # Verifica se la risposta del wiki è sufficiente
+    if risposta_wiki and "INFO_INSUFFICIENTI" not in risposta_wiki and len(risposta_wiki) > 150:
+        # Marca le fonti wiki
+        for fonte in fonti_wiki:
+            risposta_wiki = risposta_wiki.replace(f"[[{fonte}]]", f"[WIKI] [[{fonte}]]")
+        print(f"\n{Colors.CYAN}[WIKI] {Colors.END}")
+        print_wrapped(risposta_wiki)
+        print()
         sys.stdout.flush()
         return
-    ctx = "\n".join([f"### {nome}\n{testo[:1500]}" for nome, testo in wiki_pages.items()])
-    msg = [{"role":"user","content":f"Domanda: {domanda}\n\nPagine wiki:\n{ctx}\nRispondi in italiano usando [[wikilink]]."}]
-    risp = call_llm(build_system(), msg)
-    print_wrapped(risp)
+    
+    # FASE 2: Cerca online
+    print(f"\n{Colors.DIM}⚠️ Informazioni insufficienti nel wiki. Ricerca online in corso...{Colors.END}\n")
+    
+    risultati_web = web_search_brave(domanda, num_results=5)
+    
+    if not risultati_web:
+        if risposta_wiki:
+            print_wrapped(f"[WIKI] {risposta_wiki}")
+        else:
+            print(f"{Colors.YELLOW}⚠️ Nessun risultato trovato.{Colors.END}")
+        print()
+        sys.stdout.flush()
+        return
+    
+    # Costruisci contesto dai risultati web
+    web_ctx = ""
+    for i, r in enumerate(risultati_web, 1):
+        web_ctx += f"### Risultato {i}: {r['title']}\n"
+        web_ctx += f"**Fonte:** {r['url']}\n"
+        web_ctx += f"**Contenuto:** {r['snippet']}\n\n"
+    
+    msg_web = [{"role":"user","content":f"""Domanda: {domanda}
+
+FONTI WIKI (validate SPB):
+{chr(10).join([f"- [[{f}]]" for f in fonti_wiki]) if fonti_wiki else '(nessuna)'}
+
+RISULTATI RICERCA WEB (non validate):
+{web_ctx}
+
+Sintetizza una risposta. Marca ESPLICITAMENTE ogni affermazione con:
+- [WIKI] se proviene dalle fonti wiki validate
+- [WEB] se proviene dalla ricerca online (e cita la fonte)
+
+Esempio:
+[WIKI] Secondo [[Bitcoin]] la blockchain è immutabile.
+[WEB] Secondo una ricerca online (Fonte: esempio.com), ci sono 10 milioni di wallet attivi.
+
+Rispondi in italiano."""}]
+    
+    risposta_completa = call_llm(build_system(), msg_web)
+    
+    print(f"\n{Colors.CYAN}🌐 RISPOSTA (WIKI + WEB):{Colors.END}")
+    print_wrapped(risposta_completa)
     print()
     sys.stdout.flush()
+    
+    # Log della ricerca
+    update_log(f"query | {domanda[:50]}...", f"- Wiki: {len(fonti_wiki)} fonti\n- Web: {len(risultati_web)} risultati")
 
 def cmd_lint():
     print(f"\n{Colors.CYAN}🔬 LINT DEL WIKI{Colors.END}")
-    wiki_pages = [f.stem for f in WIKI.glob("*.md") if f.name not in ["index.md","log.md"]]
+    wiki_pages = [f.stem for f in WIKI.glob("*.md") if f.name not in ["index.md","log.md", ".indice_wiki.json"]]
     backlinks = {}
     for f in WIKI.glob("*.md"):
+        if f.name in ["index.md", "log.md", ".indice_wiki.json"]:
+            continue
         cont = read_file_safe(f)
         for p in wiki_pages:
             if f"[[{p}]]" in cont:
@@ -846,6 +1494,7 @@ def cmd_backup():
 def cmd_stato():
     stato = load_stato()
     print(f"\n{Colors.BLUE}📊 STATO{Colors.END}")
+    print(f"  Modello attivo: {Colors.CYAN}{CURRENT_MODEL}{Colors.END}")
     print(f"  Fase: {stato.get('fase','nessuna')}")
     print(f"  File: {stato.get('file_corrente','nessuno')}")
     print(f"  Evidenziazioni: {len(stato.get('evidenziazioni',[]))} trovate, indice {stato.get('indice',0)}")
@@ -859,23 +1508,28 @@ def clear_screen():
     os.system('cls' if os.name=='nt' else 'clear')
 
 def print_banner():
+    modello_nome = "V4 Pro" if CURRENT_MODEL == DEEPSEEK_PRO else "V4 Flash"
     print(f"""
 {Colors.BLUE}{Colors.BOLD}╔══════════════════════════════════════════════════════════════╗
 ║     SISTEMA SOCRATES-PLATO-BAYES - Versione Definitiva       ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.END}
+
+{Colors.YELLOW}Modello attivo:{Colors.END} {Colors.CYAN}{modello_nome} ({CURRENT_MODEL}){Colors.END}
+{Colors.YELLOW}Soglia chunk:{Colors.END} {Colors.CYAN}{CHUNK_SIZE} parole{Colors.END}
 
 {Colors.YELLOW}Comandi:{Colors.END}
 
   {Colors.GREEN}/move{Colors.END}      <file>               Sposta da clippings/ a raw/
   {Colors.GREEN}/list{Colors.END}     [cartella]           Mostra file
   {Colors.GREEN}/ingest{Colors.END}   <file>               Crea sandbox (prefisso sdbx_)
+  {Colors.GREEN}/analizza{Colors.END} <file>               Analizza file (Ingest/Traduci/Annulla)
   {Colors.GREEN}/chat{Colors.END}     [file]               Avvia/riprendi discussione
   {Colors.GREEN}/salva{Colors.END}    "risposta"           Salva evidenziazione (riassunto narrativo)
   {Colors.GREEN}/fine{Colors.END}                         Genera riassunto unificato (IL MIO SAPERE)
-  {Colors.GREEN}/promuovi{Colors.END} "Titolo"             Crea wiki e archivia sandbox
+  {Colors.GREEN}/promuovi{Colors.END} "Titolo"             Crea wiki (esclude DISCUSSIONE SOCRATICA)
   {Colors.GREEN}/riprendi{Colors.END} <file>               Ripristina sandbox archiviato
-  {Colors.GREEN}/abbandono{Colors.END}                    Archivia discussione corrente
-  {Colors.GREEN}/query{Colors.END}    "domanda"            Interroga il wiki
+  {Colors.GREEN}/archivia{Colors.END}                     Archivia discussione corrente
+  {Colors.GREEN}/query{Colors.END}    "domanda"            Interroga wiki (con indice + ricerca web)
   {Colors.GREEN}/lint{Colors.END}                         Health-check
   {Colors.GREEN}/backup{Colors.END}                       Backup completo
   {Colors.GREEN}/stato{Colors.END}                        Mostra stato
@@ -883,8 +1537,10 @@ def print_banner():
   {Colors.GREEN}/exit{Colors.END}                         Esci
 
 {Colors.BLUE}💡 >argomento< nel file, poi /chat. /salva genera riassunto narrativo tecnico.{Colors.END}
-{Colors.BLUE}💡 /fine genera riassunto unificato (IL MIO SAPERE). /promuovi archivia il sandbox.{Colors.END}
-{Colors.BLUE}💡 /riprendi <file> per recuperare una discussione archiviata.{Colors.END}
+{Colors.BLUE}💡 /analizza offre: 1. Ingest (chunk → sandbox), 2. Traduci (traduci → raggruppa → ingest chunk){Colors.END}
+{Colors.BLUE}💡 /promuovi crea pagina wiki con SINTESI, TESI, ARGOMENTI, TENSIONI, IL MIO SAPERE (esclude DISCUSSIONE SOCRATICA){Colors.END}
+{Colors.BLUE}💡 /query cerca prima nel wiki (con indice), poi online con Brave API. Marca [WIKI] e [WEB].{Colors.END}
+{Colors.BLUE}💡 In /chat: /salta (salta evidenziazione), /pausa (salva sessione){Colors.END}
 """)
     sys.stdout.flush()
 
@@ -894,7 +1550,7 @@ def print_banner():
 
 class SpbCompleter:
     def __init__(self):
-        self.commands = ["/move", "/list", "/ingest", "/chat", "/salva", "/fine", "/promuovi", "/riprendi", "/abbandono", "/query", "/lint", "/backup", "/stato", "/clear", "/exit"]
+        self.commands = ["/move", "/list", "/ingest", "/analizza", "/chat", "/salva", "/fine", "/promuovi", "/riprendi", "/archivia", "/query", "/lint", "/backup", "/stato", "/clear", "/exit"]
         self.list_targets = ["asset", "clippings", "backups", "raw", "sandbox", "wiki", "all"]
 
     def get_matches(self, text, state):
@@ -936,6 +1592,15 @@ class SpbCompleter:
             except:
                 return None
         
+        if cmd == "/analizza" and len(parts) <= 2:
+            prefix = parts[1] if len(parts) > 1 else ""
+            try:
+                files = [f.name for f in CLIPPINGS.glob("*") if f.is_file()] + [f.name for f in RAW.glob("*") if f.is_file()]
+                matches = [f for f in files if f.startswith(prefix)]
+                return matches[state] if state < len(matches) else None
+            except:
+                return None
+        
         if cmd == "/chat" and len(parts) <= 2:
             prefix = parts[1] if len(parts) > 1 else ""
             try:
@@ -954,6 +1619,9 @@ class SpbCompleter:
             except:
                 return None
         
+        if cmd == "/query" and len(parts) <= 2:
+            return None
+        
         return None
 
 # --------------------------------------------------------------
@@ -962,8 +1630,12 @@ class SpbCompleter:
 
 def main():
     init_vault()
+    ripulisci_file_orfani()
     clear_screen()
     print_banner()
+
+    # Costruisci indice wiki all'avvio
+    costruisci_indice()
 
     if readline is not None:
         completer = SpbCompleter()
@@ -972,6 +1644,18 @@ def main():
         readline.set_completer_delims(' \t\n;')
     else:
         print(f"{Colors.YELLOW}⚠️ readline non disponibile, autocompletamento disabilitato{Colors.END}")
+
+    # Controlla checkpoint attivo
+    checkpoint = carica_checkpoint()
+    if checkpoint:
+        print(f"{Colors.YELLOW}⚠️ È presente una sessione interrotta: {checkpoint.get('operazione')}{Colors.END}")
+        riprendi = input(f"{Colors.CYAN}👉 Riprendere? (s/n): {Colors.END}").lower()
+        if riprendi == 's':
+            stato = load_stato()
+            stato.update(checkpoint.get("stato", {}))
+            save_stato(stato)
+            print(f"{Colors.GREEN}✅ Stato ripristinato. Usa /chat per continuare.{Colors.END}")
+        CHECKPOINT_PATH.unlink()
 
     while True:
         try:
@@ -1002,6 +1686,12 @@ def main():
                 else:
                     print(f"{Colors.RED}❌ Specifica il file (TAB per autocompletare){Colors.END}")
                     sys.stdout.flush()
+            elif cmd == "/analizza":
+                if arg:
+                    cmd_analizza(arg)
+                else:
+                    print(f"{Colors.RED}❌ Specifica il file: /analizza documento.md{Colors.END}")
+                    sys.stdout.flush()
             elif cmd == "/chat":
                 cmd_chat(arg if arg else None)
             elif cmd == "/salva":
@@ -1021,8 +1711,8 @@ def main():
                 else:
                     print(f"{Colors.RED}❌ Specifica il file da riprendere (TAB per autocompletare){Colors.END}")
                     sys.stdout.flush()
-            elif cmd == "/abbandono":
-                cmd_abbandono()
+            elif cmd == "/archivia":
+                cmd_archivia()
             elif cmd == "/query":
                 if arg:
                     cmd_query(arg)

@@ -1,6 +1,6 @@
 {
-  "fase": null,
-  "file_corrente": null,
+  "fase": "INGEST_COMPLETATO",
+  "file_corrente": "sdbx_satoshi-paper_chunk2_it_V1.md",
   "evidenziazioni": [],
   "conversazioni": [],
   "indice": 0,
