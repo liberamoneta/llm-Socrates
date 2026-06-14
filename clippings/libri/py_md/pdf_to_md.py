@@ -4,7 +4,7 @@ pdf_to_md.py - Converte PDF in Markdown per llm-Socrates
 Flusso: Tesseract OCR → DeepSeek correzione fine → Markdown
 Struttura:
     Input:  llm-Socrates/clippings/*.pdf
-    Output: llm-Socrates/clippings/*.md (stessa cartella del PDF, minuscolo/underscore)
+    Output: llm-Socrates/clippings/*.md (stessa cartella del PDF)
     Immagini: llm-Socrates/asset/*.png/.jpg
 """
 
@@ -97,11 +97,6 @@ def check_output_exists(output_path):
     return True
 
 
-def normalizza_nome(nome: str) -> str:
-    """Converte un nome in minuscolo con underscore (sostituisce spazi e trattini)"""
-    return nome.lower().replace(' ', '_').replace('-', '_')
-
-
 # ============================================================
 # STEP 1: TESSERACT OCR
 # ============================================================
@@ -162,7 +157,6 @@ def estrai_immagini_con_pymupdf(pdf_path, assets_folder, base_name):
                     ext = "jpg"
                     img_data = pix.tobytes("jpeg")
                 
-                # Nome immagine: base_name_img_N.est (già minuscolo/underscore da base_name)
                 img_filename = f"{base_name}_img_{image_counter}.{ext}"
                 img_path = assets_folder / img_filename
                 
@@ -339,9 +333,8 @@ ocr_engine: Tesseract + DeepSeek
             img = all_images[i]
             md_content += f"![{img['filename']}](/asset/{img['filename']})\n"
     
-    # Salva nella stessa cartella del PDF (clippings/) con nome normalizzato
-    nome_file = normalizza_nome(base_name)
-    md_path = output_dir / f"{nome_file}.md"
+    # Salva nella stessa cartella del PDF (clippings/)
+    md_path = output_dir / f"{base_name}.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_content)
     
@@ -358,19 +351,18 @@ def converti_pdf(pdf_path, output_dir, assets_folder, lingua='eng+ita', usa_deep
     output_dir = clippings/ (dove salvare il .md)
     assets_folder = asset/ (dove salvare le immagini)
     """
-    base_name_raw = pdf_path.stem
-    base_name_normalizzato = normalizza_nome(base_name_raw)
+    base_name = pdf_path.stem
     
     print(f"\n{'='*60}")
-    print(f"📄 CONVERSIONE: {base_name_raw}.pdf")
+    print(f"📄 CONVERSIONE: {base_name}.pdf")
     print(f"{'='*60}")
     
     # Crea cartelle
     assets_folder.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # STEP 1: Estrai immagini con PyMuPDF (usa base_name_normalizzato per le immagini)
-    all_images = estrai_immagini_con_pymupdf(pdf_path, assets_folder, base_name_normalizzato)
+    # STEP 1: Estrai immagini con PyMuPDF
+    all_images = estrai_immagini_con_pymupdf(pdf_path, assets_folder, base_name)
     
     # STEP 2: Tesseract OCR
     testo_tesseract = estrai_testo_con_tesseract(pdf_path, lingua)
@@ -381,8 +373,8 @@ def converti_pdf(pdf_path, output_dir, assets_folder, lingua='eng+ita', usa_deep
     else:
         testo_finale = testo_tesseract
     
-    # STEP 4: Crea Markdown in clippings/ (usa base_name_normalizzato per il titolo nel frontmatter)
-    md_path = crea_markdown(testo_finale, all_images, base_name_normalizzato, output_dir)
+    # STEP 4: Crea Markdown in clippings/
+    md_path = crea_markdown(testo_finale, all_images, base_name, output_dir)
     
     # Report finale
     print(f"\n{'='*60}")
@@ -507,7 +499,7 @@ def main():
     base_dir = get_base_dir()
     print(f"\n📂 Base directory: {base_dir}")
     
-    # PERCORSI
+    # PERCORSI AGGIORNATI
     pdf_folder = base_dir / "clippings"      # PDF input
     assets_folder = base_dir / "asset"       # Immagini output
     output_dir = base_dir / "clippings"      # MARKDOWN output (stessa cartella del PDF)
@@ -532,9 +524,8 @@ def main():
     
     print(f"\n✅ Selezionato: {selected_pdf.name}")
     
-    # Verifica esistenza del Markdown in clippings/ (nome normalizzato)
-    nome_atteso = normalizza_nome(selected_pdf.stem)
-    md_path = output_dir / f"{nome_atteso}.md"
+    # Verifica esistenza del Markdown in clippings/
+    md_path = output_dir / f"{selected_pdf.stem}.md"
     if not check_output_exists(md_path):
         print("❌ Operazione annullata")
         sys.exit(0)

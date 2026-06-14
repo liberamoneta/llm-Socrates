@@ -1,4 +1,4 @@
----
+esc---
 title: "La blockchain più antica del mondo si nasconde in un giornale dal 1995"
 source: "https://www.vice.com/it/article/blockchain-surety-new-york-times-1995-haber-stornetta/"
 author:

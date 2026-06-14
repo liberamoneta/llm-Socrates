@@ -5,7 +5,6 @@ Cerca file SOLO in llm-Socrates/clippings/
 Traduce in ITALIANO o RUSSO
 Salva in vault/raw/
 Supporta traduzioni multiple in sequenza
-Formato output: nome_file_it.md (minuscolo, underscore)
 """
 
 import os
@@ -72,7 +71,7 @@ def trova_base_dir() -> Optional[Path]:
     return None
 
 def trova_file_markdown(base_dir: Path) -> List[Path]:
-    """Trova file markdown SOLO in clippings/ (esclude già tradotti con _it.md o _ru.md)"""
+    """Trova file markdown SOLO in clippings/"""
     file_trovati = []
     clippings_dir = base_dir / "clippings"
     
@@ -81,8 +80,8 @@ def trova_file_markdown(base_dir: Path) -> List[Path]:
         return file_trovati
     
     for file in clippings_dir.glob("*.md"):
-        # Escludi già tradotti (solo formato con underscore)
-        if not any(file.name.endswith(suffix) for suffix in ['_it.md', '_ru.md']):
+        # Escludi già tradotti
+        if not any(file.name.endswith(suffix) for suffix in ['-it.md', '-ru.md', '-en.md']):
             file_trovati.append(file)
     
     return sorted(file_trovati)
@@ -172,10 +171,9 @@ def traduci_file(file_path: Path, output_dir: Path, lingua: str) -> bool:
     # Correggi immagini
     tradotto = correggi_percorsi_immagini(tradotto)
     
-    # Crea nome file: minuscolo, underscore, senza spazi
-    nome_base = file_path.stem.lower().replace(' ', '_')
-    suffisso = '_it.md' if lingua == 'it' else '_ru.md'
-    output_path = output_dir / f"{nome_base}{suffisso}"
+    # Salva
+    suffisso = '-it.md' if lingua == 'it' else '-ru.md'
+    output_path = output_dir / f"{file_path.stem}{suffisso}"
     
     try:
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -269,6 +267,7 @@ def main():
     
     # Loop principale per traduzioni multiple
     traduzioni_effettuate = 0
+    totale_traduzioni = 0
     
     while True:
         # Trova file disponibili
@@ -302,7 +301,6 @@ def main():
         print(f"   File: {len(file_selezionati)}")
         print(f"   Lingua: {'Italiano' if lingua == 'it' else 'Russo'}")
         print(f"   Output: {output_dir}")
-        print(f"   Formato: nome_file{'it' if lingua == 'it' else 'ru'}.md (minuscolo, underscore)")
         
         conferma = input("\n👉 Procedere? (s/n): ").lower()
         if conferma != 's':
@@ -318,6 +316,7 @@ def main():
             if traduci_file(file, output_dir, lingua):
                 successi += 1
                 traduzioni_effettuate += 1
+                totale_traduzioni += 1
             if i < len(file_selezionati):
                 time.sleep(1)
         
