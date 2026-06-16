@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
 pdf_analyzer.py - Analizza e converte PDF in Markdown per llm-Socrates
-Supporta: Tesseract (locale, gratuito) o Vision-Language via SiliconFlow (API)
-Flusso: PDF → OCR → Markdown strutturato → (opzionale) Traduzione in italiano
+Supporta: Tesseract (locale, gratuito) o DeepSeek-OCR (API, alta qualità)
+Flusso: PDF → OCR → Markdown strutturato
+Struttura:
+    Input:  llm-Socrates/clippings/*.pdf
+    Output: llm-Socrates/clippings/*.md (minuscolo, underscore)
+    Immagini: llm-Socrates/asset/*.png/.jpg
+
+Compatibile con: Windows, Linux, macOS
 """
 
 import fitz
@@ -16,6 +22,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List
 
+# OCR libraries
 try:
     from pdf2image import convert_from_path
 except ImportError:
@@ -28,11 +35,21 @@ except ImportError:
     print("⚠️ pytesseract non installata. Esegui: pip install pytesseract")
     print("   (necessaria solo per modalità Tesseract)")
 
+# AI
 try:
     from openai import OpenAI
 except ImportError:
     print("❌ openai non installata. Esegui: pip install openai")
     sys.exit(1)
+
+# DeepSeek OCR SDK
+try:
+    from deepseek_ocr import DeepSeekOCR
+    DEEPSEEK_SDK_AVAILABLE = True
+except ImportError:
+    DEEPSEEK_SDK_AVAILABLE = False
+    print("⚠️ deepseek-ocr non installata. Esegui: pip install deepseek-ocr")
+    print("   La modalità DeepSeek-OCR non sarà disponibile.")
 
 try:
     from dotenv import load_dotenv
@@ -42,54 +59,26 @@ except ImportError:
 load_dotenv()
 
 # ============================================================
-# IMPORTA FUNZIONI DA traduci.py (opzionale)
+# CONFIGURAZIONE
 # ============================================================
 
-try:
-    from traduci import (
-        PROVIDER_CONFIG,
-        MODEL_DESCRIPTIONS,
-        traduci_con_deepseek,
-        correggi_percorsi_immagini,
-        carica_api_keys
-    )
-    TRADUCI_AVAILABLE = True
-    print("✅ Modulo traduzione caricato da traduci.py")
-except ImportError:
-    TRADUCI_AVAILABLE = False
-    print("⚠️ traduci.py non trovato. Traduzione automatica non disponibile.")
-
-# ============================================================
-# CONFIGURAZIONE - SILICONFLOW (per OCR via Vision-Language)
-# ============================================================
-
-SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
-if not SILICONFLOW_API_KEY:
-    print("❌ SILICONFLOW_API_KEY non trovata nel .env")
-    print("   Ottieni una chiave su: https://cloud.siliconflow.cn")
-    print("   Aggiungi al .env: SILICONFLOW_API_KEY=sk-...")
-    sys.exit(1)
-
-# Endpoint corretto per SiliconFlow
-DEEPSEEK_BASE_URL = "https://api.siliconflow.com/v1"
-
-# Modelli testati e funzionanti su SiliconFlow
-# Visione (OCR): Qwen3-VL 30B MoE
-VISION_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-
-# Modello chat per correzioni (opzionale)
-CHAT_MODEL = "deepseek-ai/DeepSeek-V3"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_OCR_MODEL = "deepseek-ocr"  # Modello OCR di DeepSeek
 
 # Percorso di Poppler per Windows
 POPPLER_PATH = r"C:\poppler\poppler-26.02.0\Library\bin"
 
 
 def setup_tesseract() -> bool:
-    """Configura il percorso di Tesseract in base al sistema operativo."""
+    """
+    Configura il percorso di Tesseract in base al sistema operativo.
+    Restituisce True se Tesseract è disponibile.
+    """
     try:
         import shutil
         
         if sys.platform == "win32":
+            # Percorsi possibili su Windows
             possibili_paths = [
                 r"C:\Program Files\Tesseract-OCR\tesseract.exe",
                 r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
@@ -100,6 +89,7 @@ def setup_tesseract() -> bool:
                     return True
         
         elif sys.platform in ["linux", "linux2", "darwin"]:
+            # Su Linux/macOS, tesseract è normalmente nel PATH
             tesseract_path = shutil.which('tesseract')
             if tesseract_path:
                 pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -112,10 +102,14 @@ def setup_tesseract() -> bool:
 
 
 def get_poppler_path() -> Optional[str]:
-    """Restituisce il percorso di Poppler in base al sistema operativo."""
+    """
+    Restituisce il percorso di Poppler in base al sistema operativo.
+    """
     if sys.platform == "win32":
+        # Verifica se il percorso esiste
         if os.path.exists(POPPLER_PATH):
             return POPPLER_PATH
+        # Percorsi alternativi
         alternative_paths = [
             r"C:\poppler\bin",
             r"C:\poppler\poppler-26.02.0\bin",
@@ -127,11 +121,16 @@ def get_poppler_path() -> Optional[str]:
                 return path
         return None
     else:
+        # Su Linux/macOS, poppler-utils è normalmente nel PATH
         import shutil
         if shutil.which('pdftoppm'):
-            return None
+            return None  # usa il PATH
     return None
 
+
+# ============================================================
+# FUNZIONI DI UTILITÀ
+# ============================================================
 
 def get_base_dir() -> Path:
     """Trova la directory llm-Socrates"""
@@ -241,15 +240,12 @@ def estrai_testo_con_tesseract(pdf_path: Path, lingua: str = 'eng+ita') -> List[
     return testo_per_pagina
 
 
-def correggi_con_llm(testo: str, pagina: int) -> str:
-    """Corregge errori OCR con LLM (DeepSeek-V3 via SiliconFlow)"""
-    if not SILICONFLOW_API_KEY or len(testo.strip()) < 200:
+def correggi_con_deepseek(testo: str, pagina: int) -> str:
+    """Corregge errori OCR con DeepSeek (opzionale)"""
+    if not DEEPSEEK_API_KEY or len(testo.strip()) < 200:
         return testo
     
-    client = OpenAI(
-        api_key=SILICONFLOW_API_KEY,
-        base_url=DEEPSEEK_BASE_URL
-    )
+    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
     
     prompt = f"""Sei un correttore OCR professionista. Il testo seguente è stato estratto con Tesseract OCR.
 
@@ -270,7 +266,7 @@ TESTO CORRETTO:"""
 
     try:
         response = client.chat.completions.create(
-            model=CHAT_MODEL,
+            model="deepseek-chat",
             messages=[
                 {"role": "system", "content": "Sei un correttore OCR esperto."},
                 {"role": "user", "content": prompt}
@@ -283,89 +279,48 @@ TESTO CORRETTO:"""
             testo_corretto = testo_corretto[15:]
         return testo_corretto.strip()
     except Exception as e:
-        print(f"      ⚠️ Errore correzione: {e}")
+        print(f"      ⚠️ Errore DeepSeek: {e}")
         return testo
 
 
 # ============================================================
-# MODALITÀ 2: VISION-LANGUAGE via SILICONFLOW (Qwen3-VL)
+# MODALITÀ 2: DEEPSEEK-OCR (API, alta qualità con SDK)
 # ============================================================
-
-def estrai_testo_con_visione(pdf_path: Path) -> List[str]:
+def estrai_testo_con_deepseek_ocr(pdf_path: Path) -> List[str]:
     """
-    OCR con Qwen3-VL via SiliconFlow
-    Modello testato: Qwen/Qwen3-VL-30B-A3B-Instruct
+    OCR con DeepSeek-OCR via SDK (alta qualità, pochi centesimi)
+    Usa la libreria deepseek-ocr ufficiale
     """
-    if not SILICONFLOW_API_KEY:
-        print("   ❌ SILICONFLOW_API_KEY non configurata")
+    if not DEEPSEEK_API_KEY:
+        print("   ❌ DEEPSEEK_API_KEY non configurata")
         return []
     
-    print(f"\n🔍 OCR via SiliconFlow (Qwen3-VL 30B)...")
-    print("   ⏳ Conversione pagine in immagini (200 DPI)...")
+    if not DEEPSEEK_SDK_AVAILABLE:
+        print("   ❌ Libreria deepseek-ocr non installata")
+        print("   Esegui: pip install deepseek-ocr")
+        return []
     
-    poppler_path = get_poppler_path()
-    if poppler_path:
-        images = convert_from_path(pdf_path, dpi=200, poppler_path=poppler_path)
-    else:
-        images = convert_from_path(pdf_path, dpi=200)
+    print(f"\n🔍 DeepSeek-OCR (SDK)...")
+    print("   ⏳ OCR in corso (può richiedere qualche minuto per PDF grandi)...")
     
-    print(f"   📄 {len(images)} pagine trovate")
-    
-    client = OpenAI(
-        api_key=SILICONFLOW_API_KEY,
-        base_url=DEEPSEEK_BASE_URL
-    )
-    
-    testo_per_pagina = []
-    
-    for i, image in enumerate(images):
-        print(f"   📄 Pagina {i+1}/{len(images)} - OCR in corso...")
+    try:
+        # Inizializza il client SDK
+        client = DeepSeekOCR(
+            api_key=DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com/v1"
+        )
         
-        try:
-            # Converti immagine in base64
-            buffer = io.BytesIO()
-            image.save(buffer, format="PNG")
-            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            # Chiamata al modello visione
-            response = client.chat.completions.create(
-                model=VISION_MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": f"data:image/png;base64,{img_base64}"
-                            },
-                            {
-                                "type": "text",
-                                "text": """Extract all text from this document page. 
-Preserve the structure and formatting. 
-Output in clean markdown format.
-Keep headings, lists, tables, and important formatting."""
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=4096,
-                temperature=0.1
-            )
-            
-            testo = response.choices[0].message.content
-            testo_per_pagina.append(testo)
-            print(f"      ✅ {len(testo)} caratteri estratti")
-            
-        except Exception as e:
-            print(f"      ⚠️ Errore OCR pagina {i+1}: {e}")
-            testo_per_pagina.append("")
+        # Esegui OCR sul PDF - SENZA parametro 'prompt'
+        result = client.parse(str(pdf_path), mode="free_ocr")
         
-        # Pausa per evitare rate limiting
-        if i < len(images) - 1:
-            time.sleep(0.5)
-    
-    return testo_per_pagina
-
+        print(f"   ✅ OCR completato! {len(result)} caratteri estratti")
+        
+        # Restituisci come lista con una sola pagina
+        return [result]
+        
+    except Exception as e:
+        print(f"   ❌ Errore DeepSeek-OCR: {e}")
+        return []
 
 # ============================================================
 # CREAZIONE MARKDOWN UNIFICATA
@@ -373,7 +328,9 @@ Keep headings, lists, tables, and important formatting."""
 
 def crea_markdown(testo_per_pagina: List[str], all_images: List[dict], 
                   base_name: str, output_dir: Path, metodo: str) -> Path:
-    """Crea il file Markdown dal testo OCR e dalle immagini"""
+    """
+    Crea il file Markdown dal testo OCR e dalle immagini
+    """
     md_content = f"""---
 title: {base_name}
 source: {base_name}.pdf
@@ -391,30 +348,18 @@ ocr_method: {metodo}
     
     print("\n📝 Creazione Markdown...")
     
-    # Per Vision-Language (una sola pagina o più pagine)
-    if metodo == 'visione':
-        for page_num, text in enumerate(testo_per_pagina):
-            if not text or not text.strip():
-                continue
-            
-            # Aggiungi separatore pagina se ci sono più pagine
-            if len(testo_per_pagina) > 1:
-                md_content += f"\n### Pagina {page_num + 1}\n\n"
-            
+    # Se è DeepSeek (una sola pagina grande), gestisci diversamente
+    if metodo == 'deepseek' and len(testo_per_pagina) == 1:
+        text = testo_per_pagina[0]
+        if text and text.strip():
             md_content += text
             md_content += "\n"
-            
-            # Inserisci immagini della pagina corrente
-            while images_used < len(all_images) and all_images[images_used]['page'] == page_num:
-                img = all_images[images_used]
-                md_content += f"\n![{img['filename']}](/asset/{img['filename']})\n"
-                print(f"   🖼️ Immagine {img['filename']} (pag. {page_num + 1})")
-                images_used += 1
-            
-            md_content += "\n---\n"
+            print(f"   ✅ Testo estratto da DeepSeek-OCR")
+        else:
+            print("   ⚠️ Nessun testo estratto!")
     
-    # Per Tesseract (multipagina)
     else:
+        # Per Tesseract (multipagina)
         for page_num, text in enumerate(testo_per_pagina):
             if not text or not text.strip():
                 continue
@@ -423,6 +368,7 @@ ocr_method: {metodo}
             md_content += text
             md_content += "\n"
             
+            # Inserisci immagini della pagina corrente
             while images_used < len(all_images) and all_images[images_used]['page'] == page_num:
                 img = all_images[images_used]
                 md_content += f"\n![{img['filename']}](/asset/{img['filename']})\n"
@@ -438,6 +384,7 @@ ocr_method: {metodo}
             img = all_images[i]
             md_content += f"![{img['filename']}](/asset/{img['filename']})\n"
     
+    # Salva il file
     nome_file = normalizza_nome(base_name)
     md_path = output_dir / f"{nome_file}.md"
     with open(md_path, "w", encoding="utf-8") as f:
@@ -447,98 +394,16 @@ ocr_method: {metodo}
 
 
 # ============================================================
-# FUNZIONE TRADUZIONE (da traduci.py)
-# ============================================================
-
-def offri_traduzione(md_path: Path, base_dir: Path) -> bool:
-    """
-    Offre all'utente di tradurre il file Markdown in italiano
-    usando la logica di traduci.py
-    """
-    if not TRADUCI_AVAILABLE:
-        print("\n⚠️ Modulo traduzione non disponibile (traduci.py non trovato)")
-        return False
-    
-    print(f"\n📝 File Markdown creato: {md_path.name}")
-    
-    print("\n🔧 Tradurre il file in italiano?")
-    print("   1. Sì, usa DeepSeek Ufficiale")
-    print("   2. Sì, usa SiliconFlow")
-    print("   3. No, salta")
-    
-    choice = input("\n👉 Scegli (1-3): ").strip()
-    
-    if choice not in ["1", "2"]:
-        print("   ⏭️ Traduzione saltata")
-        return False
-    
-    # Mappa scelta a provider
-    provider_map = {"1": "deepseek", "2": "siliconflow"}
-    provider_key = provider_map[choice]
-    
-    # Carica API keys
-    api_keys = carica_api_keys()
-    api_key = api_keys.get(provider_key)
-    
-    if not api_key:
-        print(f"   ❌ Chiave API non trovata per {PROVIDER_CONFIG[provider_key]['nome']}")
-        print(f"   Aggiungi {provider_key.upper()}_API_KEY nel .env")
-        return False
-    
-    provider_config = PROVIDER_CONFIG[provider_key]
-    base_url = provider_config["base_url"]
-    
-    # Scegli modello (usa il primo della lista)
-    model_id, model_name = provider_config["modelli"][0]
-    
-    print(f"   🤖 Traduzione con: {model_name} ({model_id})")
-    
-    # Leggi il file Markdown
-    try:
-        with open(md_path, 'r', encoding='utf-8') as f:
-            testo = f.read()
-        print(f"   📖 {len(testo)} caratteri da tradurre")
-    except Exception as e:
-        print(f"   ❌ Errore lettura: {e}")
-        return False
-    
-    # Traduci
-    print(f"   🔄 Traduzione in italiano in corso...")
-    lingua = 'it'
-    tradotto = traduci_con_deepseek(testo, lingua, api_key, base_url, model_id)
-    
-    if not tradotto:
-        print(f"   ❌ Traduzione fallita")
-        return False
-    
-    # Correggi percorsi immagini
-    tradotto = correggi_percorsi_immagini(tradotto)
-    
-    # Salva il file tradotto
-    output_dir = base_dir / "vault" / "raw"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    nome_base = md_path.stem
-    output_path = output_dir / f"{nome_base}_it.md"
-    
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(tradotto)
-        print(f"   ✅ Traduzione salvata in: {output_path}")
-        return True
-    except Exception as e:
-        print(f"   ❌ Errore salvataggio: {e}")
-        return False
-
-
-# ============================================================
 # CONVERSIONE COMPLETA
 # ============================================================
 
 def converti_pdf(pdf_path: Path, output_dir: Path, assets_folder: Path,
                  metodo: str = 'tesseract', lingua: str = 'eng+ita',
                  correggi_ocr: bool = False) -> bool:
-    """Conversione completa PDF → Markdown"""
+    """
+    Conversione completa PDF → Markdown
+    metodo: 'tesseract' o 'deepseek'
+    """
     base_name_raw = pdf_path.stem
     base_name_normalizzato = normalizza_nome(base_name_raw)
     
@@ -546,6 +411,7 @@ def converti_pdf(pdf_path: Path, output_dir: Path, assets_folder: Path,
     print(f"📄 CONVERSIONE: {base_name_raw}.pdf")
     print(f"{'='*60}")
     
+    # Crea cartelle
     assets_folder.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -556,38 +422,33 @@ def converti_pdf(pdf_path: Path, output_dir: Path, assets_folder: Path,
     if metodo == 'tesseract':
         testo_per_pagina = estrai_testo_con_tesseract(pdf_path, lingua)
         
-        # Correzione opzionale con LLM
-        if correggi_ocr and SILICONFLOW_API_KEY:
-            print("\n🔍 STEP 2b: Correzione errori OCR con LLM...")
+        # Correzione opzionale con DeepSeek
+        if correggi_ocr and DEEPSEEK_API_KEY:
+            print("\n🔍 STEP 2b: Correzione errori con DeepSeek...")
             testo_corretto = []
             for i, testo in enumerate(testo_per_pagina):
                 if testo and len(testo.strip()) > 100:
                     print(f"   📄 Pagina {i+1}/{len(testo_per_pagina)} - correzione...")
-                    testo_pulito = correggi_con_llm(testo, i+1)
+                    testo_pulito = correggi_con_deepseek(testo, i+1)
                     testo_corretto.append(testo_pulito)
                     time.sleep(0.3)
                 else:
                     testo_corretto.append(testo)
             testo_per_pagina = testo_corretto
         
-    elif metodo == 'visione':
-        testo_per_pagina = estrai_testo_con_visione(pdf_path)
+    elif metodo == 'deepseek':
+        testo_per_pagina = estrai_testo_con_deepseek_ocr(pdf_path)
     else:
         print(f"❌ Metodo sconosciuto: {metodo}")
         return False
     
-    if not testo_per_pagina or all(not t.strip() for t in testo_per_pagina):
+    if not testo_per_pagina:
         print("❌ Nessun testo estratto")
         return False
     
     # STEP 3: Crea Markdown
     md_path = crea_markdown(testo_per_pagina, all_images, base_name_normalizzato, 
                            output_dir, metodo)
-    
-    # STEP 4: Offri traduzione (NUOVO)
-    if md_path and TRADUCI_AVAILABLE:
-        base_dir = get_base_dir()
-        offri_traduzione(md_path, base_dir)
     
     # Report
     print(f"\n{'='*60}")
@@ -598,7 +459,7 @@ def converti_pdf(pdf_path: Path, output_dir: Path, assets_folder: Path,
     print(f"🖼️ Immagini:        {assets_folder} ({len(all_images)} file)")
     print(f"🔧 OCR:             {metodo}")
     if metodo == 'tesseract' and correggi_ocr:
-        print(f"🤖 Correzione:      LLM (DeepSeek-V3)")
+        print(f"🤖 Correzione:      DeepSeek")
     print(f"{'='*60}")
     
     return True
@@ -655,20 +516,20 @@ def scegli_metodo() -> tuple:
     print("")
     print("  📍 METODO 1: Tesseract (locale, gratuito)")
     print("     ✅ Veloce, offline, nessun costo")
-    print("     ❌ Meno preciso su layout complessi")
+    print("     ❌ Meno preciso su layout complessi (tabelle, formule)")
     print("")
-    print("  📍 METODO 2: Qwen3-VL via SiliconFlow (API, alta qualità)")
-    print(f"     ✅ Modello: {VISION_MODEL}")
+    print("  📍 METODO 2: DeepSeek-OCR (API, alta qualità)")
     print("     ✅ Massima precisione, output Markdown strutturato")
     print("     ✅ Gestisce tabelle, formule, layout complessi")
-    print("     💰 Costo: ~$0.29 per milione di token")
+    print("     💰 Costo: ~$0.28 per 1000 pagine (pochi centesimi)")
     print("     🌐 Richiede connessione internet")
     print("")
     
     while True:
-        choice = input("👉 Scegli (1=Tesseract, 2=Qwen3-VL): ").strip()
+        choice = input("👉 Scegli (1=Tesseract, 2=DeepSeek-OCR): ").strip()
         
         if choice == '1':
+            # Scegli lingua per Tesseract
             print("\n🌐 Lingua del PDF:")
             print("   1. Inglese (eng)")
             print("   2. Italiano (ita)")
@@ -682,18 +543,24 @@ def scegli_metodo() -> tuple:
             else:
                 lingua = 'eng+ita'
             
-            print("\n🔧 Correggere errori OCR con LLM?")
-            print("   (usa DeepSeek-V3 via SiliconFlow)")
+            # Chiedi se correggere con DeepSeek
+            print("\n🔧 Correggere errori OCR con DeepSeek?")
+            print("   (richiede API key, migliora la qualità)")
             correggi = input("👉 (s/n): ").strip().lower() == 's'
             
             return ('tesseract', lingua, correggi)
         
         elif choice == '2':
-            if not SILICONFLOW_API_KEY:
-                print("   ❌ SILICONFLOW_API_KEY non configurata nel .env")
-                print("   Usa Tesseract o configura la chiave.")
+            if not DEEPSEEK_API_KEY:
+                print("   ❌ DEEPSEEK_API_KEY non configurata nel file .env")
+                print("   Impossibile usare DeepSeek-OCR.")
+                print("   Usa Tesseract o configura la API key.")
                 continue
-            return ('visione', 'eng+ita', False)
+            if not DEEPSEEK_SDK_AVAILABLE:
+                print("   ❌ Libreria deepseek-ocr non installata")
+                print("   Esegui: pip install deepseek-ocr")
+                continue
+            return ('deepseek', 'eng+ita', False)
         
         else:
             print("❌ Scelta non valida. Inserisci 1 o 2.")
@@ -706,41 +573,48 @@ def scegli_metodo() -> tuple:
 def main():
     print("=" * 60)
     print("📄 PDF ANALYZER - Converte PDF in Markdown")
-    print("   Tesseract (locale) o Qwen3-VL via SiliconFlow")
+    print("   Tesseract (locale) o DeepSeek-OCR (API)")
     print(f"   Sistema: {sys.platform}")
     print("=" * 60)
     
+    # Configura e verifica Tesseract
     print("\n🔧 Configurazione Tesseract...")
     if setup_tesseract():
         try:
             version = pytesseract.get_tesseract_version()
             print(f"✅ Tesseract {version} pronto")
-        except Exception:
-            print(f"✅ Tesseract disponibile")
+        except Exception as e:
+            print(f"✅ Tesseract disponibile (versione non rilevata)")
     else:
         print("\n⚠️ Tesseract non trovato. La modalità Tesseract non sarà disponibile.")
         if sys.platform == "win32":
             print("   Su Windows, scarica da: https://github.com/UB-Mannheim/tesseract/wiki")
+        elif sys.platform in ["linux", "linux2"]:
+            print("   Su Linux: sudo apt install tesseract-ocr tesseract-ocr-ita")
+        elif sys.platform == "darwin":
+            print("   Su macOS: brew install tesseract tesseract-lang")
     
+    # Verifica Poppler
     poppler_path = get_poppler_path()
     if poppler_path:
         print(f"✅ Poppler trovato: {poppler_path}")
     elif sys.platform == "win32":
         print("⚠️ Poppler non trovato. Verifica il percorso in POPPLER_PATH")
     
-    if SILICONFLOW_API_KEY:
-        print(f"✅ SiliconFlow API key configurata")
-        print(f"   Modello Visione: {VISION_MODEL}")
-        print(f"   Modello Chat: {CHAT_MODEL}")
+    # Verifica API key DeepSeek
+    if DEEPSEEK_API_KEY:
+        print(f"✅ DeepSeek API key configurata")
     else:
-        print("⚠️ SiliconFlow API key non trovata. Qwen3-VL non disponibile.")
-        print("   Aggiungi SILICONFLOW_API_KEY al .env")
+        print("⚠️ DeepSeek API key non trovata. La modalità DeepSeek-OCR non sarà disponibile.")
+        print("   Crea un file .env con: DEEPSEEK_API_KEY=tuachiave")
     
-    if TRADUCI_AVAILABLE:
-        print("✅ Modulo traduzione disponibile (traduci.py)")
+    # Verifica SDK DeepSeek
+    if DEEPSEEK_SDK_AVAILABLE:
+        print(f"✅ DeepSeek SDK disponibile")
     else:
-        print("⚠️ Modulo traduzione non disponibile (traduci.py non trovato)")
+        print("⚠️ DeepSeek SDK non installato. Esegui: pip install deepseek-ocr")
     
+    # Trova base directory
     base_dir = get_base_dir()
     print(f"\n📂 Base directory: {base_dir}")
     
@@ -767,14 +641,17 @@ def main():
     
     print(f"\n✅ Selezionato: {selected_pdf.name}")
     
+    # Verifica esistenza del Markdown
     nome_atteso = normalizza_nome(selected_pdf.stem)
     md_path = output_dir / f"{nome_atteso}.md"
     if not check_output_exists(md_path):
         print("❌ Operazione annullata")
         sys.exit(0)
     
+    # Scegli metodo OCR
     metodo, lingua, correggi = scegli_metodo()
     
+    # Converti
     converti_pdf(selected_pdf, output_dir, assets_folder, metodo, lingua, correggi)
 
 

@@ -2,7 +2,7 @@
 """
 pdf_analyzer.py - Analizza e converte PDF in Markdown per llm-Socrates
 Supporta: Tesseract (locale, gratuito) o Vision-Language via SiliconFlow (API)
-Flusso: PDF → OCR → Markdown strutturato → (opzionale) Traduzione in italiano
+Flusso: PDF → OCR → Markdown strutturato
 """
 
 import fitz
@@ -40,24 +40,6 @@ except ImportError:
     print("⚠️ python-dotenv non installato. Esegui: pip install python-dotenv")
 
 load_dotenv()
-
-# ============================================================
-# IMPORTA FUNZIONI DA traduci.py (opzionale)
-# ============================================================
-
-try:
-    from traduci import (
-        PROVIDER_CONFIG,
-        MODEL_DESCRIPTIONS,
-        traduci_con_deepseek,
-        correggi_percorsi_immagini,
-        carica_api_keys
-    )
-    TRADUCI_AVAILABLE = True
-    print("✅ Modulo traduzione caricato da traduci.py")
-except ImportError:
-    TRADUCI_AVAILABLE = False
-    print("⚠️ traduci.py non trovato. Traduzione automatica non disponibile.")
 
 # ============================================================
 # CONFIGURAZIONE - SILICONFLOW (per OCR via Vision-Language)
@@ -447,91 +429,6 @@ ocr_method: {metodo}
 
 
 # ============================================================
-# FUNZIONE TRADUZIONE (da traduci.py)
-# ============================================================
-
-def offri_traduzione(md_path: Path, base_dir: Path) -> bool:
-    """
-    Offre all'utente di tradurre il file Markdown in italiano
-    usando la logica di traduci.py
-    """
-    if not TRADUCI_AVAILABLE:
-        print("\n⚠️ Modulo traduzione non disponibile (traduci.py non trovato)")
-        return False
-    
-    print(f"\n📝 File Markdown creato: {md_path.name}")
-    
-    print("\n🔧 Tradurre il file in italiano?")
-    print("   1. Sì, usa DeepSeek Ufficiale")
-    print("   2. Sì, usa SiliconFlow")
-    print("   3. No, salta")
-    
-    choice = input("\n👉 Scegli (1-3): ").strip()
-    
-    if choice not in ["1", "2"]:
-        print("   ⏭️ Traduzione saltata")
-        return False
-    
-    # Mappa scelta a provider
-    provider_map = {"1": "deepseek", "2": "siliconflow"}
-    provider_key = provider_map[choice]
-    
-    # Carica API keys
-    api_keys = carica_api_keys()
-    api_key = api_keys.get(provider_key)
-    
-    if not api_key:
-        print(f"   ❌ Chiave API non trovata per {PROVIDER_CONFIG[provider_key]['nome']}")
-        print(f"   Aggiungi {provider_key.upper()}_API_KEY nel .env")
-        return False
-    
-    provider_config = PROVIDER_CONFIG[provider_key]
-    base_url = provider_config["base_url"]
-    
-    # Scegli modello (usa il primo della lista)
-    model_id, model_name = provider_config["modelli"][0]
-    
-    print(f"   🤖 Traduzione con: {model_name} ({model_id})")
-    
-    # Leggi il file Markdown
-    try:
-        with open(md_path, 'r', encoding='utf-8') as f:
-            testo = f.read()
-        print(f"   📖 {len(testo)} caratteri da tradurre")
-    except Exception as e:
-        print(f"   ❌ Errore lettura: {e}")
-        return False
-    
-    # Traduci
-    print(f"   🔄 Traduzione in italiano in corso...")
-    lingua = 'it'
-    tradotto = traduci_con_deepseek(testo, lingua, api_key, base_url, model_id)
-    
-    if not tradotto:
-        print(f"   ❌ Traduzione fallita")
-        return False
-    
-    # Correggi percorsi immagini
-    tradotto = correggi_percorsi_immagini(tradotto)
-    
-    # Salva il file tradotto
-    output_dir = base_dir / "vault" / "raw"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    nome_base = md_path.stem
-    output_path = output_dir / f"{nome_base}_it.md"
-    
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(tradotto)
-        print(f"   ✅ Traduzione salvata in: {output_path}")
-        return True
-    except Exception as e:
-        print(f"   ❌ Errore salvataggio: {e}")
-        return False
-
-
-# ============================================================
 # CONVERSIONE COMPLETA
 # ============================================================
 
@@ -583,11 +480,6 @@ def converti_pdf(pdf_path: Path, output_dir: Path, assets_folder: Path,
     # STEP 3: Crea Markdown
     md_path = crea_markdown(testo_per_pagina, all_images, base_name_normalizzato, 
                            output_dir, metodo)
-    
-    # STEP 4: Offri traduzione (NUOVO)
-    if md_path and TRADUCI_AVAILABLE:
-        base_dir = get_base_dir()
-        offri_traduzione(md_path, base_dir)
     
     # Report
     print(f"\n{'='*60}")
@@ -735,11 +627,6 @@ def main():
     else:
         print("⚠️ SiliconFlow API key non trovata. Qwen3-VL non disponibile.")
         print("   Aggiungi SILICONFLOW_API_KEY al .env")
-    
-    if TRADUCI_AVAILABLE:
-        print("✅ Modulo traduzione disponibile (traduci.py)")
-    else:
-        print("⚠️ Modulo traduzione non disponibile (traduci.py non trovato)")
     
     base_dir = get_base_dir()
     print(f"\n📂 Base directory: {base_dir}")

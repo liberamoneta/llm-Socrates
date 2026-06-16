@@ -1,0 +1,25 @@
+{
+    "files.exclude": {
+        "vault/glossario.json": true,
+        "vault/sandbox/.stato_spb.json": true,
+        "vault/wiki/.indice_wiki.json": true,
+        "vault/wiki/index.md": true,
+        "vault/wiki/log.md": true,
+        ".obsidian": true,
+        ".vscode": true,
+        "venv": true,
+        "__pycache__": true,
+        "*.pyc": true,
+        ".env": true,
+        "backups": true
+    },
+    "search.exclude": {
+        "venv/**": true,
+        "backups/**": true,
+        "**/*.pyc": true,
+        "**/__pycache__/**": true,
+        "vault/raw/**": true,
+        "vault/sandbox/**": true,
+        "vault/wiki/**": true
+    }
+}

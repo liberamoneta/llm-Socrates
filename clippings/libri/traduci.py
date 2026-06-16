@@ -51,47 +51,6 @@ def carica_api_keys():
 API_KEYS = carica_api_keys()
 
 # ============================================================
-# DESCRIZIONI MODELLI
-# ============================================================
-
-MODEL_DESCRIPTIONS = {
-    # DeepSeek
-    "deepseek-ai/DeepSeek-V3": "💬 Chat generale, ragionamento, codice",
-    "deepseek-ai/DeepSeek-R1": "🧠 Ragionamento avanzato, matematica, logica",
-    "deepseek-ai/DeepSeek-V2": "⚡ Bilanciato, veloce ed economico",
-    
-    # Qwen
-    "Qwen/Qwen2.5-72B-Instruct": "📝 Traduzioni, scrittura, analisi testi",
-    "Qwen/Qwen2.5-32B-Instruct": "📝 Traduzioni, scrittura (più economico)",
-    "Qwen/Qwen2.5-14B-Instruct": "📝 Traduzioni leggere, veloci",
-    "Qwen/Qwen2.5-7B-Instruct": "📝 Traduzioni ultra-leggere",
-    
-    # Qwen Visione
-    "Qwen/Qwen3-VL-30B-A3B-Instruct": "👁️ OCR avanzato + traduzione",
-    "Qwen/Qwen3-VL-8B-Instruct": "👁️ OCR veloce + traduzione leggera",
-    "Qwen/Qwen3-VL-32B-Instruct": "👁️ OCR alta qualità + traduzione",
-    
-    # Meta Llama
-    "meta-llama/Meta-Llama-3.1-70B-Instruct": "💬 Chat, ragionamento, codice",
-    "meta-llama/Meta-Llama-3.1-8B-Instruct": "💬 Chat leggera, veloce",
-    "meta-llama/Llama-3.2-3B-Instruct": "💬 Chat ultra-leggera",
-    
-    # Altri
-    "OpenGVLab/InternVL2-8B": "👁️ Visione, OCR, analisi immagini",
-    "OpenGVLab/InternVL2-26B": "👁️ Visione avanzata, OCR",
-    "ZhipuAI/GLM-4-9B": "💬 Chat, ragionamento, codice",
-    "01-ai/Yi-1.5-34B": "💬 Chat, ragionamento",
-    "01-ai/Yi-1.5-9B": "💬 Chat leggera, veloce",
-    "mistralai/Mistral-7B-Instruct-v0.2": "💬 Chat efficiente, codice",
-    
-    # DeepSeek Ufficiale
-    "deepseek-v4-pro": "🔥 DeepSeek V4 Pro - Modello di punta",
-    "deepseek-v4-flash": "⚡ DeepSeek V4 Flash - Veloce ed economico",
-    "deepseek-chat": "💬 DeepSeek Chat - Standard",
-    "deepseek-reasoner": "🧠 DeepSeek Reasoner - Ragionamento",
-}
-
-# ============================================================
 # DEFINIZIONE PROVIDER E MODELLI
 # ============================================================
 
@@ -100,10 +59,9 @@ PROVIDER_CONFIG = {
         "nome": "DeepSeek Ufficiale",
         "base_url": "https://api.deepseek.com",
         "modelli": [
-            ("deepseek-v4-pro", "DeepSeek V4 Pro (Nuovo!)"),
-            ("deepseek-v4-flash", "DeepSeek V4 Flash (Rapido)"),
             ("deepseek-chat", "DeepSeek Chat (standard)"),
             ("deepseek-reasoner", "DeepSeek Reasoner (ragionamento)"),
+            ("deepseek-v4-pro", "DeepSeek V4 Pro"),
         ]
     },
     "siliconflow": {
@@ -112,55 +70,12 @@ PROVIDER_CONFIG = {
         "modelli": [
             ("deepseek-ai/DeepSeek-V3", "DeepSeek V3"),
             ("deepseek-ai/DeepSeek-R1", "DeepSeek R1 (ragionamento)"),
+            ("deepseek-ai/DeepSeek-V2", "DeepSeek V2"),
             ("Qwen/Qwen2.5-72B-Instruct", "Qwen 2.5 72B"),
             ("Qwen/Qwen2.5-32B-Instruct", "Qwen 2.5 32B"),
         ]
     }
 }
-
-def ottieni_modelli_siliconflow(api_key: str) -> List[Tuple[str, str, str]]:
-    """
-    Ottiene la lista dei modelli disponibili da SiliconFlow in tempo reale.
-    Restituisce una lista di tuple (model_id, model_name, description)
-    """
-    try:
-        import requests
-        
-        url = "https://api.siliconflow.com/v1/models"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        modelli = []
-        
-        for model in data.get("data", []):
-            model_id = model.get("id", "")
-            
-            # Filtra modelli non utili per traduzione
-            if "embed" in model_id.lower() or "rerank" in model_id.lower():
-                continue
-            
-            # Crea un nome leggibile
-            nome = model_id.replace("ai/", "").replace("-Instruct", "")
-            
-            # Ottieni descrizione dal dizionario
-            descrizione = MODEL_DESCRIPTIONS.get(model_id, "💬 Modello generico")
-            
-            modelli.append((model_id, nome, descrizione))
-        
-        # Ordina per nome
-        modelli.sort(key=lambda x: x[1])
-        
-        return modelli
-        
-    except Exception as e:
-        print(f"   ⚠️ Errore nel recupero modelli: {e}")
-        return []
 
 def scegli_provider_e_modello() -> Tuple[str, str, str]:
     """Menu per scegliere provider e modello"""
@@ -193,54 +108,22 @@ def scegli_provider_e_modello() -> Tuple[str, str, str]:
                 api_key = API_KEYS.get(provider_key)
                 if not api_key:
                     print(f"   ❌ Chiave API non trovata per {provider_config['nome']}")
+                    print(f"   Aggiungi {provider_key.upper()}_API_KEY nel .env")
                     continue
                 
-                # ====== PER SILICONFLOW: usa lista dinamica ======
-                if provider_key == "siliconflow":
-                    print(f"\n🔄 Recupero modelli disponibili da SiliconFlow...")
-                    modelli_dinamici = ottieni_modelli_siliconflow(api_key)
-                    
-                    if not modelli_dinamici:
-                        print("   ⚠️ Nessun modello trovato. Uso lista statica.")
-                        modelli_da_usare = provider_config["modelli"]
-                    else:
-                        # Filtra solo modelli chat/text (escludi visione se non serve)
-                        modelli_da_usare = []
-                        for model_id, model_name, desc in modelli_dinamici:
-                            # Filtra per modelli chat utili per traduzione
-                            if any(x in model_id.lower() for x in ["qwen", "deepseek", "llama", "yi", "mistral", "glm"]):
-                                # Escludi modelli visione (VL) se non necessario
-                                if "vl" not in model_id.lower():
-                                    modelli_da_usare.append((model_id, model_name, desc))
-                        
-                        if not modelli_da_usare:
-                            modelli_da_usare = modelli_dinamici[:10]
-                        
-                        print(f"   ✅ Trovati {len(modelli_da_usare)} modelli")
-                else:
-                    # Per DeepSeek usa lista statica con descrizioni
-                    modelli_da_usare = []
-                    for model_id, model_name in provider_config["modelli"]:
-                        desc = MODEL_DESCRIPTIONS.get(model_id, "💬 Modello generico")
-                        modelli_da_usare.append((model_id, model_name, desc))
-                # ===================================================
-                
                 print(f"\n🤖 Modelli disponibili su {provider_config['nome']}:")
-                print("-" * 60)
-                for i, (model_id, model_name, desc) in enumerate(modelli_da_usare, 1):
-                    print(f"   {i}. {model_name:<35} {desc}")
-                print("-" * 60)
+                for i, (model_id, model_name) in enumerate(provider_config['modelli'], 1):
+                    print(f"   {i}. {model_name} ({model_id})")
                 
                 while True:
                     try:
                         model_choice = input("\n👉 Scegli modello (numero): ").strip()
                         idx_model = int(model_choice) - 1
-                        if 0 <= idx_model < len(modelli_da_usare):
-                            model_id, model_name, desc = modelli_da_usare[idx_model]
-                            print(f"\n   📌 {desc}")
+                        if 0 <= idx_model < len(provider_config['modelli']):
+                            model_id, model_name = provider_config['modelli'][idx_model]
                             return provider_key, model_id, api_key
                         else:
-                            print(f"   ❌ Scelta non valida (1-{len(modelli_da_usare)})")
+                            print(f"   ❌ Scelta non valida (1-{len(provider_config['modelli'])})")
                     except ValueError:
                         print("   ❌ Inserisci un numero valido")
             else:

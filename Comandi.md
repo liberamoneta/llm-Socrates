@@ -1,13 +1,12 @@
 # Window
 'source venv/Scripts/activate'
+
 'git pull'
-'python wiki.py'
+'python traduci.py'
+'
  /move <file>      
  /list [cartella]   
  /ingest <file>   
- /chat
-  /salva "risposta" (durante chat)     
-  /fine            
   /abbandono
   /promuovi "Titolo"                   
   /query "..."     

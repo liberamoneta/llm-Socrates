@@ -2,7 +2,6 @@
 """
 analisi_ingest.py — Sistema Socrates–Plato–Bayes (SPB) - Versione Definitiva
 Flusso: /estrai (>>---<<) → /analizza (unificato) → /chat → /salva → /fine → /promuovi
-Supporta: DeepSeek Ufficiale e SiliconFlow
 """
 
 import os
@@ -14,7 +13,6 @@ import re
 import textwrap
 from datetime import date, datetime
 from pathlib import Path
-from typing import Tuple
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -42,111 +40,7 @@ def print_wrapped(text, color=Colors.CYAN, prefix="🤖 "):
     print(f"\n{color}{prefix}{wrapped}{Colors.END}")
 
 # ============================================================
-# CONFIGURAZIONE PROVIDER
-# ============================================================
-
-def carica_api_keys_ingest():
-    """Carica le API keys da .env"""
-    env_paths = [
-        Path.cwd() / ".env",
-        Path.cwd() / "llm-Socrates" / ".env",
-        Path(__file__).parent / ".env",
-    ]
-    
-    for env_path in env_paths:
-        if env_path.exists():
-            load_dotenv(env_path)
-            break
-    
-    return {
-        "deepseek": os.getenv("DEEPSEEK_API_KEY"),
-        "siliconflow": os.getenv("SILICONFLOW_API_KEY")
-    }
-
-API_KEYS = carica_api_keys_ingest()
-
-# Configurazione provider per ingest
-PROVIDER_CONFIG = {
-    "deepseek": {
-        "nome": "DeepSeek Ufficiale",
-        "base_url": "https://api.deepseek.com",
-        "modelli": [
-            "deepseek-chat",
-            "deepseek-reasoner",
-            "deepseek-v4-pro"
-        ]
-    },
-    "siliconflow": {
-        "nome": "SiliconFlow",
-        "base_url": "https://api.siliconflow.com/v1",
-        "modelli": [
-            "deepseek-ai/DeepSeek-V3",
-            "deepseek-ai/DeepSeek-R1",
-            "deepseek-ai/DeepSeek-V2",
-            "Qwen/Qwen2.5-72B-Instruct",
-            "Qwen/Qwen2.5-32B-Instruct"
-        ]
-    }
-}
-
-def scegli_provider_e_modello_ingest() -> Tuple[str, str, str]:
-    """Menu per scegliere provider e modello per ingest"""
-    
-    print("\n" + "=" * 60)
-    print("🔧 SCEGLI PROVIDER E MODELLO per INGEST")
-    print("=" * 60)
-    
-    provider_keys = list(PROVIDER_CONFIG.keys())
-    print("\n📡 Provider disponibili:")
-    for i, key in enumerate(provider_keys, 1):
-        config = PROVIDER_CONFIG[key]
-        has_key = API_KEYS.get(key) is not None
-        status = "✅" if has_key else "❌ (chiave mancante)"
-        print(f"   {i}. {config['nome']} - {status}")
-    
-    print(f"   {len(provider_keys)+1}. Esci")
-    
-    while True:
-        try:
-            choice = input("\n👉 Scegli provider (numero): ").strip()
-            if choice == str(len(provider_keys)+1):
-                return None, None, None
-            
-            idx = int(choice) - 1
-            if 0 <= idx < len(provider_keys):
-                provider_key = provider_keys[idx]
-                provider_config = PROVIDER_CONFIG[provider_key]
-                
-                api_key = API_KEYS.get(provider_key)
-                if not api_key:
-                    print(f"   ❌ Chiave API non trovata per {provider_config['nome']}")
-                    print(f"   Aggiungi {provider_key.upper()}_API_KEY nel .env")
-                    continue
-                
-                print(f"\n🤖 Modelli disponibili su {provider_config['nome']}:")
-                for i, model_id in enumerate(provider_config['modelli'], 1):
-                    print(f"   {i}. {model_id}")
-                
-                while True:
-                    try:
-                        model_choice = input("\n👉 Scegli modello (numero): ").strip()
-                        idx_model = int(model_choice) - 1
-                        if 0 <= idx_model < len(provider_config['modelli']):
-                            model_id = provider_config['modelli'][idx_model]
-                            return provider_key, model_id, api_key
-                        else:
-                            print(f"   ❌ Scelta non valida (1-{len(provider_config['modelli'])})")
-                    except ValueError:
-                        print("   ❌ Inserisci un numero valido")
-            else:
-                print(f"   ❌ Scelta non valida (1-{len(provider_keys)})")
-        except ValueError:
-            print("   ❌ Inserisci un numero valido")
-        except KeyboardInterrupt:
-            return None, None, None
-
-# ============================================================
-# COSTANTI - DIRECTORIES
+# COSTANTI
 # ============================================================
 
 ASSET = Path("asset")
@@ -164,14 +58,16 @@ STATE_FILE = SANDBOX / ".stato_spb.json"
 CHECKPOINT_PATH = SANDBOX / ".checkpoint.json"
 INDICE_PATH = WIKI / ".indice_wiki.json"
 
-# ============================================================
-# VARIABILI GLOBALI (impostate da main)
-# ============================================================
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    print(f"{Colors.RED}❌ ERRORE: DEEPSEEK_API_KEY non trovata{Colors.END}")
+    sys.exit(1)
 
-DEEPSEEK_API_KEY = None
-CURRENT_MODEL = None
-CLIENT = None
-PROVIDER_NOME = None
+CLIENT = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+
+# Modello DeepSeek
+DEEPSEEK_PRO = "deepseek-v4-pro"
+CURRENT_MODEL = DEEPSEEK_PRO
 
 # Dimensione chunk per ingest
 CHUNK_SIZE = 1500
@@ -232,15 +128,13 @@ def update_log(operation, details):
         f.write(log_entry)
 
 def call_llm(system: str, messages: list, allow_search: bool = False, model: str = None) -> str:
-    """Chiamata LLM con supporto provider variabile"""
-    global CLIENT, CURRENT_MODEL
-    
+    """Chiamata LLM con supporto opzionale per ricerca esterna"""
     try:
         if allow_search:
             print(f"{Colors.DIM}🔍 Ricerca esterna abilitata...{Colors.END}", flush=True)
         
         model_to_use = model if model else CURRENT_MODEL
-        print(f"{Colors.DIM}🤖 Chiamata LLM ({model_to_use})...{Colors.END}", flush=True)
+        print(f"{Colors.DIM}🤖 Chiamata DeepSeek ({model_to_use})...{Colors.END}", flush=True)
         response = CLIENT.chat.completions.create(
             model=model_to_use,
             messages=[{"role": "system", "content": system}, *messages],
@@ -1508,7 +1402,6 @@ def cmd_backup():
 def cmd_stato():
     stato = load_stato()
     print(f"\n{Colors.BLUE}📊 STATO{Colors.END}")
-    print(f"  Provider: {Colors.CYAN}{PROVIDER_NOME}{Colors.END}")
     print(f"  Modello attivo: {Colors.CYAN}{CURRENT_MODEL}{Colors.END}")
     print(f"  Fase: {stato.get('fase','nessuna')}")
     print(f"  File: {stato.get('file_corrente','nessuno')}")
@@ -1522,15 +1415,13 @@ def clear_screen():
     os.system('cls' if os.name=='nt' else 'clear')
 
 def print_banner():
-    modello_nome = CURRENT_MODEL if CURRENT_MODEL else "Non selezionato"
-    provider_nome = PROVIDER_NOME if PROVIDER_NOME else "Non selezionato"
+    modello_nome = "V4 Pro"
     print(f"""
 {Colors.BLUE}{Colors.BOLD}╔══════════════════════════════════════════════════════════════╗
 ║     SISTEMA SOCRATES-PLATO-BAYES - Versione Definitiva       ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.END}
 
-{Colors.YELLOW}Provider:{Colors.END} {Colors.CYAN}{provider_nome}{Colors.END}
-{Colors.YELLOW}Modello attivo:{Colors.END} {Colors.CYAN}{modello_nome}{Colors.END}
+{Colors.YELLOW}Modello attivo:{Colors.END} {Colors.CYAN}{modello_nome} ({CURRENT_MODEL}){Colors.END}
 {Colors.YELLOW}Soglia chunk:{Colors.END} {Colors.CYAN}{CHUNK_SIZE} parole{Colors.END}
 """)
 
@@ -1673,33 +1564,6 @@ class SpbCompleter:
 # ============================================================
 
 def main():
-    # Prima cosa: scegli provider e modello
-    clear_screen()
-    
-    print("=" * 60)
-    print("🧠 SISTEMA SOCRATES-PLATO-BAYES (SPB)")
-    print("   Supporta: DeepSeek Ufficiale | SiliconFlow")
-    print("=" * 60)
-    
-    provider_key, model_id, api_key = scegli_provider_e_modello_ingest()
-    if provider_key is None:
-        print("\n👋 Arrivederci!")
-        return
-    
-    provider_config = PROVIDER_CONFIG[provider_key]
-    base_url = provider_config["base_url"]
-    
-    # Imposta le variabili globali
-    global DEEPSEEK_API_KEY, CURRENT_MODEL, CLIENT, PROVIDER_NOME
-    DEEPSEEK_API_KEY = api_key
-    CURRENT_MODEL = model_id
-    PROVIDER_NOME = provider_config["nome"]
-    CLIENT = OpenAI(api_key=api_key, base_url=base_url)
-    
-    print(f"\n✅ Provider: {provider_config['nome']}")
-    print(f"✅ Modello: {model_id}")
-    
-    # Continua con il resto del main
     init_vault()
     ripulisci_file_orfani()
     clear_screen()
