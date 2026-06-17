@@ -1,8 +1,8 @@
 # Window
 'source venv/Scripts/activate'
-
+'winpty python analisi_w.py'
 'git pull'
-'python traduci.py'
+
 '
  /move <file>      
  /list [cartella]   
