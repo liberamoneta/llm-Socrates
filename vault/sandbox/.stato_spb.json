@@ -1,10 +1,11 @@
 {
-  "fase": "INGEST_COMPLETATO",
-  "file_corrente": "sdbx_satoshi-paper_it_chunk1_V1.md",
+  "fase": "IN_DISCUSSIONE",
+  "file_corrente": "estratto_satoshi_paper_bitcoin_it.md",
   "evidenziazioni": [],
   "conversazioni": [],
   "indice": 0,
   "domanda_corrente": null,
   "evidenziazione_corrente": null,
-  "storico_chat": []
+  "storico_chat": [],
+  "file_path": "vault\\raw\\estratto_satoshi_paper_bitcoin_it.md"
 }
