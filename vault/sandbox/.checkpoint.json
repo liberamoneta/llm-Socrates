@@ -1,0 +1,23 @@
+{
+  "operazione": "chat",
+  "file_corrente": "estratto_satoshi_paper_bitcoin_it.md",
+  "stato": {
+    "indice": 0,
+    "evidenziazioni": [
+      "Ciò che serve è un sistema di pagamento elettronico basato su prove crittografiche invece che sulla fiducia,",
+      "Il sistema è sicuro finché i nodi onesti controllano collettivamente più potenza di calcolo di qualsiasi gruppo cooperante di nodi aggressori.",
+      "Il problema, ovviamente, è che il beneficiario non può verificare che uno dei proprietari non abbia speso due volte la moneta.",
+      "Server di Timestamp La soluzione che proponiamo inizia con un server di timestamp. Un server di timestamp funziona prendendo un hash di un blocco di elementi da timestampare e pubblicando ampiamente l'hash, ad esempio in un giornale o in un post su Usenet. Il timestamp prova che i dati devono essere esistiti in quel momento, ovviamente, per poter entrare nell'hash. Ogni timestamp include il timestamp precedente nel suo hash, formando una catena, con ogni timestamp aggiuntivo che rafforza quelli precedenti.",
+      "Il proof-of-work implica la scansione di un valore che, quando sottoposto a hash, ad esempio con SHA-256, l'hash inizi con un certo numero di bit zero.",
+      "Per compensare l'aumento della velocità hardware e il variare dell'interesse nell'esecuzione di nodi nel tempo, la difficoltà del proof-of-work è determinata da una media mobile che mira a un numero medio di blocchi all'ora. Se vengono generati troppo velocemente, la difficoltà aumenta.",
+      "Un'intestazione di blocco senza transazioni sarebbe di circa 80 byte. Se supponiamo che i blocchi vengano generati ogni 10 minuti, 80 byte \\* 6 \\* 24 \\* 365 = 4,2 MB all'anno. Con i sistemi informatici che tipicamente vengono venduti con 2 GB di RAM a partire dal 2008, e la Legge di Moore che prevede una crescita attuale di 1,2 GB all'anno, l'archiviazione non dovrebbe essere un problema anche se le intestazioni dei blocchi devono essere mantenute in memoria."
+    ],
+    "storico_chat": [
+      "Utente: /exit",
+      "LLM: Allora ci fermiamo qui. La discussione nella sandbox rimane dov’è, pronta per essere ripresa quando vorrai con `/riprendi`.  \nOgni volta che riprendi, riparti da dove avevi lasciato: la domanda socratica ti aspetta, senza fretta.\n\nBuon viaggio. ⏳"
+    ],
+    "domanda_corrente": "Se la crittografia può dimostrare matematicamente che una transazione è avvenuta, può anche dimostrare che era giusto che avvenisse — o quel giudizio richiede ancora, inevitabilmente, la fiducia in un contesto umano?",
+    "evidenziazione_corrente": "Ciò che serve è un sistema di pagamento elettronico basato su prove crittografiche invece che sulla fiducia,"
+  },
+  "timestamp": "2026-06-17T19:33:13.808741"
+}

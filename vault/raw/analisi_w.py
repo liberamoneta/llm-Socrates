@@ -47,8 +47,10 @@ def print_wrapped(text, color=Colors.CYAN, prefix="🤖 "):
 
 def safe_input(prompt):
     """Versione per Git Bash - il prompt è sempre visibile"""
+    # Stampa un newline e il prompt
     print()
     print(prompt, end='', flush=True)
+    # Legge l'input
     return input()
 
 def safe_input_semplice(prompt):
@@ -185,6 +187,7 @@ def scegli_provider_e_modello_ingest() -> Tuple[str, str, str]:
                 # Mostra modelli con descrizioni
                 for i, model_id in enumerate(provider_config['modelli'], 1):
                     desc = MODEL_DESCRIPTIONS.get(model_id, "💬 Modello generico")
+                    # Allinea il nome del modello a sinistra e la descrizione a destra
                     print(f"   {i}. {model_id:<35} {desc}", flush=True)
                 print("-" * 60, flush=True)
                 
@@ -666,10 +669,17 @@ def cmd_chat(filearg: str = None):
         if not target_file.endswith(".md"):
             target_file = target_file + ".md"
         
+        # Supporta sia file diretti che estratti
+        if not target_file.startswith("estratto_") and not target_file.startswith("sdbx_"):
+            # Cerca prima in raw/, poi in sandbox/
+            if (RAW / target_file).exists():
+                target_file = target_file
+            elif (RAW / f"estratto_{target_file}").exists():
+                target_file = f"estratto_{target_file}"
+        
         # Cerca il file in raw/ o sandbox/
         file_path = RAW / target_file
         if not file_path.exists():
-            # Cerca anche nella sandbox
             file_path = SANDBOX / target_file
         if not file_path.exists():
             print(f"{Colors.RED}❌ File non trovato: {target_file}{Colors.END}", flush=True)
@@ -1061,8 +1071,8 @@ def cmd_analizza(filepath: str):
     if parole <= CHUNK_SIZE:
         cmd_ingest_diretto(src, contenuto)
     else:
-        # Ingest chunk (da implementare)
-        print(f"{Colors.YELLOW}⚠️ Ingest chunk non ancora implementato.{Colors.END}", flush=True)
+        # ingest_chunk sarebbe qui
+        pass
 
 # ============================================================
 # COMANDO /promuovi (CREAZIONE WIKI)
@@ -1179,7 +1189,7 @@ Genera i seguenti elementi:
    - **Conclusione:** ...
    - **Implicazione per te:** ...
 
-3. **Punti chiave** - Massimo 7, ciascuna una frase, in formato numerato
+3. **Punti chiave** - Massimo 7, ciascuno una frase, in formato numerato
 
 4. **Citazioni rilevanti** - Se presenti nel testo, usa > "..."
    Se non ci sono citazioni esplicite, lascia vuoto
@@ -1435,16 +1445,6 @@ def cmd_query(domanda: str):
         else:
             print(f"{Colors.YELLOW}⚠️ Nessun risultato trovato.{Colors.END}", flush=True)
         return
-    
-    # Mostra i risultati web
-    print(f"\n{Colors.CYAN}[WEB] Risultati da Brave Search:{Colors.END}", flush=True)
-    for i, r in enumerate(risultati_web[:3], 1):
-        print(f"{Colors.BOLD}{i}. {r['title']}{Colors.END}", flush=True)
-        print(f"   {r['snippet'][:200]}...", flush=True)
-        print(f"   {Colors.DIM}{r['url']}{Colors.END}\n", flush=True)
-    
-    if risposta_wiki:
-        print_wrapped(f"[WIKI] {risposta_wiki}")
 
 def cmd_lint():
     print(f"\n{Colors.CYAN}🔬 LINT DEL WIKI{Colors.END}", flush=True)
@@ -1704,7 +1704,7 @@ def main():
                 cmd_backup()
             elif cmd == "/stato":
                 cmd_stato()
-            elif cmd in ["/help","/?", "help"]:
+            elif cmd in ["/help","/?"]:
                 print_banner()
             else:
                 print(f"{Colors.RED}❌ Comando sconosciuto.{Colors.END}", flush=True)
