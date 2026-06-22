@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
 analisi_w.py — Sistema Socrates–Plato–Bayes (SPB) - Versione Definitiva
-Flusso: /estrai (%%...%% + ??...??) → /chat → /salva → /fine → /analizza → /promuovi
+Flusso: marcatori in raw/ → /analizza → sandbox → /chat → /salva → /promuovi
+
+MARCATORI NEL FILE raw/:
+  >>...<<  → COPIA il testo nella sezione EVIDENZE (non influenza la sintesi)
+  ??...??  → GENERA una domanda socratica nella sezione DOMANDE
+
 Supporta: DeepSeek Ufficiale e SiliconFlow
-Marcatori:
-  %%...%%  → Testo da estrarre per la sintesi
-  ??...??  → Testo da discutere in chat
-  > ...    → Citazione normale (rimane nel testo)
+MODIFICA: chat ibrida - LLM può rispondere direttamente o usare approccio socratico
 """
 
 import os
@@ -46,15 +48,11 @@ def print_wrapped(text, color=Colors.CYAN, prefix="🤖 "):
     print(f"\n{color}{prefix}{wrapped}{Colors.END}", flush=True)
 
 def safe_input(prompt):
-    """Versione per Git Bash - il prompt è sempre visibile"""
-    # Stampa un newline e il prompt
     print()
     print(prompt, end='', flush=True)
-    # Legge l'input
     return input()
 
 def safe_input_semplice(prompt):
-    """Versione ultra-semplice per Git Bash"""
     print()
     return input(prompt)
 
@@ -63,40 +61,30 @@ def safe_input_semplice(prompt):
 # ============================================================
 
 MODEL_DESCRIPTIONS = {
-    # DeepSeek Ufficiale
     "deepseek-v4-pro": "🔥 DeepSeek V4 Pro - Modello di punta",
     "deepseek-v4-flash": "⚡ DeepSeek V4 Flash - Veloce ed economico",
     "deepseek-chat": "💬 DeepSeek Chat - Standard",
     "deepseek-reasoner": "🧠 DeepSeek Reasoner - Ragionamento",
-    
-    # DeepSeek SiliconFlow
     "deepseek-ai/DeepSeek-V3": "💬 Chat generale, ragionamento, codice",
     "deepseek-ai/DeepSeek-R1": "🧠 Ragionamento avanzato, matematica, logica",
     "deepseek-ai/DeepSeek-V2": "⚡ Bilanciato, veloce ed economico",
-    
-    # Qwen
     "Qwen/Qwen2.5-72B-Instruct": "📝 Traduzioni, scrittura, analisi testi",
     "Qwen/Qwen2.5-32B-Instruct": "📝 Traduzioni, scrittura (più economico)",
     "Qwen/Qwen2.5-14B-Instruct": "📝 Traduzioni leggere, veloci",
     "Qwen/Qwen2.5-7B-Instruct": "📝 Traduzioni ultra-leggere",
-    
-    # Qwen Visione
     "Qwen/Qwen3-VL-30B-A3B-Instruct": "👁️ OCR avanzato + traduzione",
     "Qwen/Qwen3-VL-8B-Instruct": "👁️ OCR veloce + traduzione leggera",
     "Qwen/Qwen3-VL-32B-Instruct": "👁️ OCR alta qualità + traduzione",
-    
-    # Meta Llama
     "meta-llama/Meta-Llama-3.1-70B-Instruct": "💬 Chat, ragionamento, codice",
     "meta-llama/Meta-Llama-3.1-8B-Instruct": "💬 Chat leggera, veloce",
     "meta-llama/Llama-3.2-3B-Instruct": "💬 Chat ultra-leggera",
-    
-    # Altri
     "OpenGVLab/InternVL2-8B": "👁️ Visione, OCR, analisi immagini",
     "OpenGVLab/InternVL2-26B": "👁️ Visione avanzata, OCR",
     "ZhipuAI/GLM-4-9B": "💬 Chat, ragionamento, codice",
     "01-ai/Yi-1.5-34B": "💬 Chat, ragionamento",
     "01-ai/Yi-1.5-9B": "💬 Chat leggera, veloce",
     "mistralai/Mistral-7B-Instruct-v0.2": "💬 Chat efficiente, codice",
+    "zai-org/GLM-5.2": "coding",
 }
 
 # ============================================================
@@ -104,18 +92,15 @@ MODEL_DESCRIPTIONS = {
 # ============================================================
 
 def carica_api_keys_ingest():
-    """Carica le API keys da .env"""
     env_paths = [
         Path.cwd() / ".env",
         Path.cwd() / "llm-Socrates" / ".env",
         Path(__file__).parent / ".env",
     ]
-    
     for env_path in env_paths:
         if env_path.exists():
             load_dotenv(env_path)
             break
-    
     return {
         "deepseek": os.getenv("DEEPSEEK_API_KEY"),
         "siliconflow": os.getenv("SILICONFLOW_API_KEY")
@@ -123,16 +108,11 @@ def carica_api_keys_ingest():
 
 API_KEYS = carica_api_keys_ingest()
 
-# Configurazione provider per ingest
 PROVIDER_CONFIG = {
     "deepseek": {
         "nome": "DeepSeek Ufficiale",
         "base_url": "https://api.deepseek.com",
-        "modelli": [
-            "deepseek-chat",
-            "deepseek-reasoner",
-            "deepseek-v4-pro"
-        ]
+        "modelli": ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro"]
     },
     "siliconflow": {
         "nome": "SiliconFlow",
@@ -142,14 +122,13 @@ PROVIDER_CONFIG = {
             "deepseek-ai/DeepSeek-R1",
             "deepseek-ai/DeepSeek-V2",
             "Qwen/Qwen2.5-72B-Instruct",
-            "Qwen/Qwen2.5-32B-Instruct"
+            "Qwen/Qwen2.5-32B-Instruct",
+            "zai-org/GLM-5.2"
         ]
     }
 }
 
 def scegli_provider_e_modello_ingest() -> Tuple[str, str, str]:
-    """Menu per scegliere provider e modello per ingest"""
-    
     print("\n" + "=" * 60, flush=True)
     print("🔧 SCEGLI PROVIDER E MODELLO per INGEST", flush=True)
     print("=" * 60, flush=True)
@@ -161,7 +140,6 @@ def scegli_provider_e_modello_ingest() -> Tuple[str, str, str]:
         has_key = API_KEYS.get(key) is not None
         status = "✅" if has_key else "❌ (chiave mancante)"
         print(f"   {i}. {config['nome']} - {status}", flush=True)
-    
     print(f"   {len(provider_keys)+1}. Esci", flush=True)
     
     while True:
@@ -169,28 +147,20 @@ def scegli_provider_e_modello_ingest() -> Tuple[str, str, str]:
             choice = safe_input_semplice("\n👉 Scegli provider (numero): ").strip()
             if choice == str(len(provider_keys)+1):
                 return None, None, None
-            
             idx = int(choice) - 1
             if 0 <= idx < len(provider_keys):
                 provider_key = provider_keys[idx]
                 provider_config = PROVIDER_CONFIG[provider_key]
-                
                 api_key = API_KEYS.get(provider_key)
                 if not api_key:
                     print(f"   ❌ Chiave API non trovata per {provider_config['nome']}", flush=True)
-                    print(f"   Aggiungi {provider_key.upper()}_API_KEY nel .env", flush=True)
                     continue
-                
                 print(f"\n🤖 Modelli disponibili su {provider_config['nome']}:", flush=True)
                 print("-" * 60, flush=True)
-                
-                # Mostra modelli con descrizioni
                 for i, model_id in enumerate(provider_config['modelli'], 1):
                     desc = MODEL_DESCRIPTIONS.get(model_id, "💬 Modello generico")
-                    # Allinea il nome del modello a sinistra e la descrizione a destra
                     print(f"   {i}. {model_id:<35} {desc}", flush=True)
                 print("-" * 60, flush=True)
-                
                 while True:
                     try:
                         model_choice = safe_input_semplice("\n👉 Scegli modello (numero): ").strip()
@@ -230,18 +200,14 @@ CHECKPOINT_PATH = SANDBOX / ".checkpoint.json"
 INDICE_PATH = WIKI / ".indice_wiki.json"
 
 # ============================================================
-# VARIABILI GLOBALI (impostate da main)
+# VARIABILI GLOBALI
 # ============================================================
 
 DEEPSEEK_API_KEY = None
 CURRENT_MODEL = None
 CLIENT = None
 PROVIDER_NOME = None
-
-# Dimensione chunk per ingest
 CHUNK_SIZE = 1500
-
-# Brave Search API
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY")
 
 # ============================================================
@@ -267,6 +233,20 @@ def read_file_safe(filepath: Path) -> str:
     return raw.decode('utf-8', errors='replace')
 
 def write_file_safe(filepath: Path, content: str):
+    # Pulisci spazi trailing e righe vuote eccessive prima di scrivere
+    lines = content.split('\n')
+    lines = [line.rstrip() for line in lines]
+    cleaned = []
+    empty_count = 0
+    for line in lines:
+        if line == '':
+            empty_count += 1
+            if empty_count <= 1:
+                cleaned.append(line)
+        else:
+            empty_count = 0
+            cleaned.append(line)
+    content = '\n'.join(cleaned).strip() + '\n'
     filepath.write_text(content, encoding='utf-8', errors='replace')
 
 def load_stato() -> dict:
@@ -290,20 +270,16 @@ def read_agent_md() -> str:
     return read_file_safe(AGENT_MD) if AGENT_MD.exists() else "(agent.md non trovato)"
 
 def update_log(operation, details):
-    """Aggiorna log.md"""
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
     log_entry = f"## [{today}] {operation}\n{details}\n\n"
     with open(LOG, 'a', encoding='utf-8') as f:
         f.write(log_entry)
 
 def call_llm(system: str, messages: list, allow_search: bool = False, model: str = None) -> str:
-    """Chiamata LLM con supporto provider variabile"""
     global CLIENT, CURRENT_MODEL
-    
     try:
         if allow_search:
             print(f"{Colors.DIM}🔍 Ricerca esterna abilitata...{Colors.END}", flush=True)
-        
         model_to_use = model if model else CURRENT_MODEL
         print(f"{Colors.DIM}🤖 Chiamata LLM ({model_to_use})...{Colors.END}", flush=True)
         response = CLIENT.chat.completions.create(
@@ -317,59 +293,56 @@ def call_llm(system: str, messages: list, allow_search: bool = False, model: str
 
 def build_system(enable_search: bool = False) -> str:
     base = f"""Sei l'agente del sistema Socrates–Plato–Bayes (SPB) in lingua italiana.
-Regole: Fase INGEST: riassunto ESAUSTIVO. Fase CHAT: conversazione socratica.
+Regole: Fase INGEST: sintesi ESAUSTIVA in paragrafi continui. Fase CHAT: conversazione socratica.
 Mantieni un tono colloquiale ma rigoroso.
 {read_agent_md()}"""
-    
+    base += """
+REGOLA ASSOLUTA: Non puoi eseguire comandi di sistema, creare file, leggere directory o simulare operazioni sul filesystem. Se l'utente ti chiede di farlo, rispondi che non hai accesso diretto al filesystem e suggerisci il comando SPB corretto (es. /list, /stato). Non confermare mai la creazione o modifica di file che non hai effettivamente scritto tu.
+"""
     if enable_search:
         base += """
-        
-        RICERCA ESTERNA ABILITATA: Se ritieni utile approfondire un tema con dati, esempi o controesempi tratti dal web, puoi farlo. 
-        Scrivi "🔍 RICERCA: [query]" e io simulerò una ricerca. Usa questo solo quando arricchisce la discussione in modo critico e costruttivo.
-        Le fonti devono essere citate in modo verosimile.
-        """
+RICERCA ESTERNA ABILITATA: Se ritieni utile approfondire un tema con dati, esempi o controesempi dal web, usa "🔍 RICERCA: [query]".
+"""
     return base
 
 # ============================================================
-# FUNZIONI DI ESTRAZIONE CON NUOVI MARCATORI
+# FUNZIONI DI ESTRAZIONE MARCATORI
 # ============================================================
 
-def estrai_evidenziazioni(contenuto: str) -> list:
-    """Estrae evidenziazioni ??...?? per la chat"""
-    return re.findall(r'\?\?(.*?)\?\?', contenuto, re.DOTALL)
-
-def estrai_sezione(contenuto: str, pattern: str) -> str:
-    """Estrae una sezione dal markdown usando un pattern regex"""
-    match = re.search(pattern + r'\n\n(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
-    return match.group(1).strip() if match else ""
-
-def estrai_estratti(contenuto: str) -> list:
-    """Estrae i blocchi marcati con %%...%% per la sintesi"""
-    pattern = r'%%(.*?)%%'
+def estrai_blocchi_copia(contenuto: str) -> List[str]:
+    """Estrae i blocchi >>...<< (testo da copiare nelle evidenze)"""
+    pattern = r'>>([\s\S]*?)<<'
     matches = re.findall(pattern, contenuto, re.DOTALL)
     return [m.strip() for m in matches]
 
-def estrai_evidenze_chat(contenuto: str) -> list:
-    """Estrae i blocchi marcati con ??...?? per la chat"""
-    pattern = r'\?\?(.*?)\?\?'
+def estrai_domande_socratiche(contenuto: str) -> List[str]:
+    """Estrae le domande ??...?? (da trasformare in discussione socratica)"""
+    pattern = r'\?\?([\s\S]*?)\?\?'
     matches = re.findall(pattern, contenuto, re.DOTALL)
     return [m.strip() for m in matches]
 
-def estrai_evidenze_e_chat(contenuto: str) -> Tuple[List[str], List[str]]:
-    """
-    Estrae i blocchi %%...%% (per la sintesi) e ??...?? (per la chat)
-    Restituisce (estratti, evidenze_chat)
-    """
-    estratti = estrai_estratti(contenuto)
-    evidenze_chat = estrai_evidenze_chat(contenuto)
-    return estratti, evidenze_chat
+def rimuovi_marcatori(contenuto: str) -> str:
+    """Rimuove tutti i marcatori >>...<< e ??...?? dal testo per la sintesi"""
+    # Rimuovi >>...<<
+    testo = re.sub(r'>>.*?<<', '', contenuto, flags=re.DOTALL)
+    # Rimuovi ??...??
+    testo = re.sub(r'\?\?.*?\?\?', '', testo, flags=re.DOTALL)
+    # Pulisci spazi multipli
+    testo = re.sub(r'\n\s*\n', '\n\n', testo)
+    return testo.strip()
+
+def estrai_evidenze_da_sezione(contenuto: str) -> str:
+    """Estrae il contenuto della sezione EVIDENZE dal sandbox"""
+    match = re.search(r'## 📌 EVIDENZE DA DISCUTERE\n\n(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
 
 # ============================================================
 # CHECKPOINT E ROLLBACK
 # ============================================================
 
 def salva_checkpoint(operazione: str, file_corrente: str, stato: dict):
-    """Salva checkpoint dell'operazione in corso"""
     checkpoint = {
         "operazione": operazione,
         "file_corrente": file_corrente,
@@ -379,7 +352,6 @@ def salva_checkpoint(operazione: str, file_corrente: str, stato: dict):
     write_file_safe(CHECKPOINT_PATH, json.dumps(checkpoint, ensure_ascii=False, indent=2))
 
 def carica_checkpoint() -> dict:
-    """Carica l'ultimo checkpoint"""
     if CHECKPOINT_PATH.exists():
         try:
             return json.loads(read_file_safe(CHECKPOINT_PATH))
@@ -388,14 +360,12 @@ def carica_checkpoint() -> dict:
     return {}
 
 def ripulisci_file_orfani():
-    """Pulisce file temporanei orfani all'avvio"""
     for chunk_file in RAW.glob("*_chunk*.md"):
         sb_name = chunk_file.name.replace(".md", "_V1.md")
         sb_name = f"sdbx_{sb_name}"
         if not (SANDBOX / sb_name).exists():
             print(f"{Colors.DIM}🧹 Rimozione file orfano: {chunk_file.name}{Colors.END}", flush=True)
             chunk_file.unlink()
-    
     if CHECKPOINT_PATH.exists():
         try:
             checkpoint = json.loads(read_file_safe(CHECKPOINT_PATH))
@@ -410,13 +380,11 @@ def ripulisci_file_orfani():
 # ============================================================
 
 def costruisci_indice():
-    """Costruisce un indice leggero del wiki (titolo→dominio→tags)"""
     indice = {}
     for f in WIKI.glob("*.md"):
         if f.name in ["index.md", "log.md", ".indice_wiki.json"]:
             continue
         contenuto = read_file_safe(f)
-        
         frontmatter = {}
         fm_match = re.search(r'^---\n(.*?)\n---', contenuto, re.DOTALL)
         if fm_match:
@@ -424,7 +392,6 @@ def costruisci_indice():
                 if ':' in line:
                     key, val = line.split(':', 1)
                     frontmatter[key.strip()] = val.strip()
-        
         indice[f.stem] = {
             "percorso": str(f),
             "dominio": frontmatter.get("dominio", "Generale"),
@@ -432,23 +399,18 @@ def costruisci_indice():
             "data": frontmatter.get("data_promozione", ""),
             "tags": frontmatter.get("tags", "").split(',')
         }
-    
     write_file_safe(INDICE_PATH, json.dumps(indice, ensure_ascii=False, indent=2))
     return indice
 
 def cerca_nel_wiki(domanda: str) -> list:
-    """Cerca nel wiki usando l'indice leggero"""
     if not INDICE_PATH.exists():
         costruisci_indice()
-    
     try:
         indice = json.loads(read_file_safe(INDICE_PATH))
     except:
         return []
-    
     parole_domanda = set(domanda.lower().split())
     punteggi = []
-    
     for titolo, info in indice.items():
         score = 0
         if info["dominio"].lower() in domanda.lower():
@@ -460,31 +422,24 @@ def cerca_nel_wiki(domanda: str) -> list:
             score += 1
         if score > 0:
             punteggi.append((score, titolo, info["percorso"]))
-    
     punteggi.sort(reverse=True)
     return punteggi[:3]
 
 # ============================================================
-# RICERCA WEB (Brave Search API + DuckDuckGo fallback)
+# RICERCA WEB
 # ============================================================
 
 def web_search_brave(query: str, num_results: int = 5) -> list:
-    """Cerca online usando Brave Search API"""
     if not BRAVE_API_KEY:
         return web_search_duckduckgo(query, num_results)
-    
     try:
         import requests
-        
         url = "https://api.search.brave.com/res/v1/web/search"
         params = {"q": query, "count": num_results, "text_decorations": False}
         headers = {"Accept": "application/json", "X-Subscription-Token": BRAVE_API_KEY}
-        
         print(f"{Colors.DIM}🌐 Ricerca Brave: {query}{Colors.END}", flush=True)
-        
         response = requests.get(url, headers=headers, params=params, timeout=10)
         response.raise_for_status()
-        
         data = response.json()
         results = []
         for item in data.get("web", {}).get("results", []):
@@ -494,17 +449,13 @@ def web_search_brave(query: str, num_results: int = 5) -> list:
                 "snippet": item.get("description", "")
             })
         return results
-        
     except Exception as e:
         print(f"{Colors.YELLOW}⚠️ Errore Brave API: {e}. Fallback a DuckDuckGo.{Colors.END}", flush=True)
         return web_search_duckduckgo(query, num_results)
 
 def web_search_duckduckgo(query: str, num_results: int = 5) -> list:
-    """Fallback: cerca online usando DuckDuckGo HTML"""
-    import urllib.parse
-    import urllib.request
+    import urllib.parse, urllib.request
     from html.parser import HTMLParser
-    
     class DDGParser(HTMLParser):
         def __init__(self):
             super().__init__()
@@ -514,7 +465,6 @@ def web_search_duckduckgo(query: str, num_results: int = 5) -> list:
             self.in_title = False
             self.in_snippet = False
             self.link_url = ""
-        
         def handle_starttag(self, tag, attrs):
             if tag == 'a' and not self.in_link:
                 for attr, value in attrs:
@@ -531,7 +481,6 @@ def web_search_duckduckgo(query: str, num_results: int = 5) -> list:
                     if attr == 'class' and 's' in value:
                         self.in_snippet = True
                         break
-        
         def handle_endtag(self, tag):
             if tag == 'a' and self.in_link:
                 self.in_link = False
@@ -547,7 +496,6 @@ def web_search_duckduckgo(query: str, num_results: int = 5) -> list:
                 self.in_title = False
             elif tag == 'div':
                 self.in_snippet = False
-        
         def handle_data(self, data):
             if self.in_title:
                 self.current['title'] = data.strip()
@@ -556,112 +504,143 @@ def web_search_duckduckgo(query: str, num_results: int = 5) -> list:
                     self.current['snippet'] = data.strip()
                 else:
                     self.current['snippet'] += ' ' + data.strip()
-    
     try:
         encoded_query = urllib.parse.quote(query)
         url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-        
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-        
         print(f"{Colors.DIM}🌐 Ricerca DuckDuckGo (fallback): {query}{Colors.END}", flush=True)
-        
         with urllib.request.urlopen(req, timeout=10) as response:
             html = response.read().decode('utf-8')
             parser = DDGParser()
             parser.feed(html)
             return parser.results[:num_results]
-            
     except Exception as e:
         print(f"{Colors.DIM}⚠️ Errore DuckDuckGo: {e}{Colors.END}", flush=True)
         return []
 
 # ============================================================
-# COMANDO /estrai
+# COMANDO /analizza (INGEST CON MARCATORI)
 # ============================================================
 
-def cmd_estrai():
+def cmd_analizza(filepath: str):
     """
-    Estrae evidenze marcate con %%...%% e ??...?? da un file in raw/
-    Crea estratto_nome.md con entrambi i tipi di marcatori
+    Analizza il file in raw/ con marcatori:
+    >>...<< → copia il testo nella sezione EVIDENZE
+    ??...?? → genera domanda socratica nella sezione DOMANDE
+    La sintesi ESAUSTIVA è indipendente dai marcatori
     """
-    
-    md_files = [f for f in RAW.glob("*.md") if not f.name.startswith("estratto_")]
-    
-    if not md_files:
-        print(f"{Colors.RED}❌ Nessun file .md trovato in raw/{Colors.END}", flush=True)
+    src = RAW / filepath
+    if not src.exists():
+        print(f"{Colors.RED}❌ File non trovato in raw/: {filepath}{Colors.END}", flush=True)
         return
     
-    print(f"\n{Colors.CYAN}📁 File disponibili per estrazione:{Colors.END}", flush=True)
-    for i, f in enumerate(md_files, 1):
-        size = f.stat().st_size / 1024
-        print(f"   {i}. {f.name} ({size:.1f} KB)", flush=True)
+    print(f"\n{Colors.CYAN}📖 Analisi di: {src.name}{Colors.END}", flush=True)
+    print(f"{Colors.DIM}   Identifico marcatori >>...<< e ??...??{Colors.END}", flush=True)
     
-    try:
-        scelta = safe_input_semplice(f"\n👉 Scegli il numero del file (0 per uscire): ").strip()
-        if scelta == "0":
-            return
-        idx = int(scelta) - 1
-        if idx < 0 or idx >= len(md_files):
-            print(f"{Colors.RED}❌ Scelta non valida{Colors.END}", flush=True)
-            return
-        src_file = md_files[idx]
-    except ValueError:
-        print(f"{Colors.RED}❌ Scelta non valida{Colors.END}", flush=True)
-        return
+    contenuto_originale = read_file_safe(src)
     
-    contenuto = read_file_safe(src_file)
+    # Estrai blocchi e domande
+    blocchi_copia = estrai_blocchi_copia(contenuto_originale)
+    domande = estrai_domande_socratiche(contenuto_originale)
     
-    # Estrai entrambi i tipi di marcatori
-    estratti, evidenze_chat = estrai_evidenze_e_chat(contenuto)
+    # Rimuovi marcatori per la sintesi
+    testo_pulito = rimuovi_marcatori(contenuto_originale)
     
-    if not estratti and not evidenze_chat:
-        print(f"{Colors.YELLOW}⚠️ Nessuna evidenza %%...%% o ??...?? trovata in {src_file.name}{Colors.END}", flush=True)
-        print(f"   Aggiungi %%...%% per estrarre e ??...?? per discutere.", flush=True)
-        return
+    print(f"{Colors.GREEN}   Trovati {len(blocchi_copia)} blocchi da copiare (>>...<<){Colors.END}", flush=True)
+    print(f"{Colors.GREEN}   Trovate {len(domande)} domande socratiche (??...??){Colors.END}", flush=True)
     
-    print(f"{Colors.GREEN}✅ Trovate {len(estratti)} evidenze %%...%%{Colors.END}", flush=True)
-    print(f"{Colors.GREEN}✅ Trovate {len(evidenze_chat)} evidenze ??...?? per la chat{Colors.END}", flush=True)
+    # Genera sintesi esaustiva (indipendente dai marcatori)
+    print(f"\n{Colors.DIM}🤖 Generazione sintesi esaustiva...{Colors.END}", flush=True)
     
-    output_name = f"estratto_{src_file.stem}.md"
-    output_path = RAW / output_name
+    prompt_sintesi = f"""Genera una SINTESI ESAUSTIVA del seguente documento.
+
+DOCUMENTO:
+{testo_pulito}
+
+REGOLE FONDAMENTALI:
+1. Scrivi in paragrafi continui (NESSUN punto elenco, NESSUNA lista)
+2. Segui l'ordine originale del documento
+3. Mantieni i termini tecnici originali
+4. Preserva tutti i dati quantitativi (numeri, date, percentuali)
+5. La sintesi DEVE essere INDIPENDENTE dai marcatori:
+   - >>...<< sono evidenze (da ignorare per la sintesi)
+   - ??...?? sono domande socratiche (da ignorare per la sintesi)
+6. Struttura: Introduzione → Sviluppo → Conclusioni
+
+La sintesi deve essere completa e fluida."""
     
-    md_content = f"""---
-titolo: {src_file.stem} - Estratti
-fonte: {src_file.name}
-data_estrazione: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-tipo: estratti
-numero_estratti: {len(estratti)}
-numero_evidenze: {len(evidenze_chat)}
+    msg = [{"role": "user", "content": prompt_sintesi}]
+    sintesi = call_llm(build_system(), msg)
+    
+    # Prepara il contenuto del sandbox
+    out_name = f"sdbx_{src.stem}_V1.md"
+    out_file = SANDBOX / out_name
+    
+    # Costruisci sezione EVIDENZE
+    evidenze_text = ""
+    if blocchi_copia:
+        for i, blocco in enumerate(blocchi_copia, 1):
+            evidenze_text += f"### Evidenza {i}\n\n>>{blocco}<<\n\n"
+    else:
+        evidenze_text = "(nessuna evidenza marcata con >>...<<)\n"
+    
+    # Costruisci sezione DOMANDE
+    domande_text = ""
+    if domande:
+        for i, domanda in enumerate(domande, 1):
+            domande_text += f"### Domanda {i}\n\n??{domanda}??\n\n"
+    else:
+        domande_text = "(nessuna domanda marcata con ??...??)\n"
+    
+    # Rimuovi eventuale header duplicato che l'LLM include nella sintesi
+    sintesi_pulita = re.sub(r'^#+ 📌 SINTESI ESAUSTIVA\s*\n', '', sintesi.strip(), flags=re.IGNORECASE)
+    sintesi_pulita = re.sub(r'^# SINTESI ESAUSTIVA\s*\n', '', sintesi_pulita, flags=re.IGNORECASE)
+
+    full_content = f"""---
+stato: BOZZA
+lingua: italiano
+fonte: {src.name}
+data_ingest: {date.today()}
 ---
 
-# 📌 ESTRATTI SELEZIONATI
+# 📌 SINTESI ESAUSTIVA
 
-Fonte originale: `{src_file.name}`
+{sintesi_pulita}
 
+---
+
+## ❓ DOMANDE DA DISCUTERE
+
+{domande_text}
 """
-    for i, ev in enumerate(estratti, 1):
-        md_content += f"\n## Estratto {i}\n\n{ev}\n\n---\n"
     
-    if evidenze_chat:
-        md_content += "\n# 💬 EVIDENZE PER LA CHAT\n\n"
-        for ev in evidenze_chat:
-            md_content += f"?? {ev} ??\n\n"
+    write_file_safe(out_file, full_content)
     
-    write_file_safe(output_path, md_content)
-    print(f"{Colors.GREEN}✅ File estratto creato: {output_name}{Colors.END}", flush=True)
-    print(f"{Colors.CYAN}💡 Ora usa /chat {output_name} per iniziare la discussione socratica.{Colors.END}", flush=True)
+    print(f"\n{Colors.GREEN}✅ Sandbox creato: {out_name}{Colors.END}", flush=True)
+    print(f"{Colors.CYAN}📁 Posizione: {out_file}{Colors.END}", flush=True)
+    print(f"\n{Colors.YELLOW}✏️  COSA FARE ORA:{Colors.END}", flush=True)
+    print(f"   1. Apri il file in VS Code: {out_file}", flush=True)
+    print(f"   2. Leggi la SINTESI ESAUSTIVA", flush=True)
+    print(f"   3. Verifica le EVIDENZE copiate da >>...<<", flush=True)
+    print(f"   4. Verifica le DOMANDE generate da ??...??", flush=True)
+    print(f"   5. Se vuoi discutere, lancia /chat {out_name}", flush=True)
+    print(flush=True)
+    
+    stato = load_stato()
+    stato["fase"] = "INGEST_COMPLETATO"
+    stato["file_corrente"] = out_name
+    save_stato(stato)
+    
+    update_log("analizza", f"File: {src.name}\nEvidenze: {len(blocchi_copia)}\nDomande: {len(domande)}\nSandbox: {out_name}")
 
 # ============================================================
-# COMANDO /chat (PRIMA dell'ingest)
+# COMANDO /chat (DISCUSSIONE SOCRATICA - VERSIONE IBRIDA)
 # ============================================================
 
 def cmd_chat(filearg: str = None):
-    """
-    Avvia la discussione socratica su un file estratto.
-    PRIMA dell'ingest - discute le evidenze ??...??
-    """
+    """Avvia la discussione socratica su un file sandbox"""
     stato = load_stato()
     
     if filearg and filearg.strip():
@@ -669,26 +648,13 @@ def cmd_chat(filearg: str = None):
         if not target_file.endswith(".md"):
             target_file = target_file + ".md"
         
-        # Supporta sia file diretti che estratti
-        if not target_file.startswith("estratto_") and not target_file.startswith("sdbx_"):
-            # Cerca prima in raw/, poi in sandbox/
-            if (RAW / target_file).exists():
-                target_file = target_file
-            elif (RAW / f"estratto_{target_file}").exists():
-                target_file = f"estratto_{target_file}"
-        
-        # Cerca il file in raw/ o sandbox/
-        file_path = RAW / target_file
+        # Cerca in sandbox/
+        file_path = SANDBOX / target_file
         if not file_path.exists():
-            file_path = SANDBOX / target_file
+            # Cerca in raw/
+            file_path = RAW / target_file
         if not file_path.exists():
-            print(f"{Colors.RED}❌ File non trovato: {target_file}{Colors.END}", flush=True)
-            print(f"   File disponibili in raw/:", flush=True)
-            for f in RAW.glob("estratto_*.md"):
-                print(f"     - {f.name}", flush=True)
-            print(f"   File disponibili in sandbox/:", flush=True)
-            for f in SANDBOX.glob("sdbx_*_V1.md"):
-                print(f"     - {f.name}", flush=True)
+            print(f"{Colors.RED}❌ File non trovato{Colors.END}", flush=True)
             return
         
         stato["file_corrente"] = file_path.name
@@ -709,30 +675,30 @@ def cmd_chat(filearg: str = None):
     
     file_path = Path(stato.get("file_path", stato["file_corrente"]))
     if not file_path.exists():
-        file_path = RAW / stato["file_corrente"]
+        file_path = SANDBOX / stato["file_corrente"]
         if not file_path.exists():
-            file_path = SANDBOX / stato["file_corrente"]
+            file_path = RAW / stato["file_corrente"]
         if not file_path.exists():
             print(f"{Colors.RED}❌ File non trovato: {stato['file_corrente']}{Colors.END}", flush=True)
             return
     
     contenuto = read_file_safe(file_path)
     
-    # Estrai evidenze ??...??
-    evidenze = estrai_evidenze_chat(contenuto)
+    # Estrai domande ??...?? dalla sezione DOMANDE DA DISCUTERE
+    domande = estrai_domande_socratiche(contenuto)
     
-    if not evidenze:
-        print(f"{Colors.YELLOW}⚠️ Nessuna evidenza ??...?? trovata in {file_path.name}{Colors.END}", flush=True)
-        print(f"   Aggiungi ??...?? nel file e riprova.", flush=True)
+    if not domande:
+        print(f"{Colors.YELLOW}⚠️ Nessuna domanda ??...?? trovata in {file_path.name}{Colors.END}", flush=True)
+        print(f"   Aggiungi ??...?? nel file (sezione DOMANDE) e riprova.", flush=True)
         return
     
-    print(f"{Colors.GREEN}🔍 Trovate {len(evidenze)} evidenze ??...?? in {file_path.name}:{Colors.END}", flush=True)
-    for e in evidenze:
-        print(f"   • {e}", flush=True)
+    print(f"{Colors.GREEN}🔍 Trovate {len(domande)} domande socratiche in {file_path.name}:{Colors.END}", flush=True)
+    for d in domande:
+        print(f"   • {d}", flush=True)
     print(flush=True)
     
     stato["fase"] = "IN_DISCUSSIONE"
-    stato["evidenziazioni"] = evidenze
+    stato["evidenziazioni"] = domande
     stato["conversazioni"] = []
     stato["indice"] = 0
     stato["file_path"] = str(file_path)
@@ -740,45 +706,105 @@ def cmd_chat(filearg: str = None):
     avvia_evidenziazione()
 
 def avvia_evidenziazione():
-    """Avvia la discussione su una singola evidenziazione"""
     stato = load_stato()
     idx = stato["indice"]
-    evidenze = stato.get("evidenziazioni", [])
+    domande = stato.get("evidenziazioni", [])
     
-    if idx >= len(evidenze):
-        print(f"\n{Colors.GREEN}✅ Tutte le evidenze ??...?? discusse!{Colors.END}", flush=True)
-        print(f"   Usa /fine per generare IL MIO SAPERE (riassunto finale).", flush=True)
+    if idx >= len(domande):
+        print(f"\n{Colors.GREEN}✅ Tutte le domande discusse!{Colors.END}", flush=True)
+        print(f"   Usa /promuovi Titolo per creare la pagina wiki.", flush=True)
         print(flush=True)
         return
     
-    ev = evidenze[idx]
+    domanda = domande[idx]
+    
+    # Leggi il file per estrarre le evidenze
+    file_path = Path(stato.get("file_path", stato["file_corrente"]))
+    evidenze = ""
+    if file_path.exists():
+        contenuto = read_file_safe(file_path)
+        evidenze_raw = estrai_evidenze_da_sezione(contenuto)
+        # Pulisci le evidenze per il prompt
+        if evidenze_raw and "(nessuna" not in evidenze_raw:
+            # Estrai solo il testo tra >>...<<
+            blocchi = re.findall(r'>>([\s\S]*?)<<', evidenze_raw)
+            if blocchi:
+                evidenze = "\n".join([f"- {b.strip()}" for b in blocchi[:3]])  # Max 3 evidenze
+            else:
+                evidenze = evidenze_raw[:500]
+        else:
+            evidenze = "(nessuna evidenza marcata)"
+    
     print(f"\n{Colors.MAGENTA}{'='*60}{Colors.END}", flush=True)
-    print(f"{Colors.YELLOW}💬 Evidenza {idx+1}/{len(evidenze)}: {ev}{Colors.END}", flush=True)
+    print(f"{Colors.YELLOW}💬 Domanda {idx+1}/{len(domande)}: {domanda}{Colors.END}", flush=True)
     print(f"{Colors.MAGENTA}{'='*60}{Colors.END}", flush=True)
-    print(f"{Colors.DIM}🤖 LLM genera domanda socratica...{Colors.END}", flush=True)
     
-    msg = [{"role":"user","content":f"Genera una domanda socratica su: {ev}\nSolo la domanda, senza preamboli."}]
-    domanda = call_llm(build_system(), msg)
+    # Avvia il dialogo socratico - VERSIONE IBRIDA MIGLIORATA
+    msg = [{"role":"user","content":f"""Sei Socrate. L'utente ha posto questa domanda: "{domanda}"
+
+EVIDENZE DAL TESTO (marcate dall'utente con >>...<<):
+{evidenze}
+
+IL TUO RUOLO - APPROCCIO IBRIDO:
+
+**QUANDO RISPONDERE DIRETTAMENTE:**
+- Domande fattuali ("quando è successo?", "quanti sono?", "chi ha detto?")
+- Richieste di chiarimento tecnico ("come funziona?", "qual è la differenza tra X e Y?")
+- Domande su definizioni ("cos'è esattamente...?")
+- L'utente chiede esplicitamente una risposta
+
+**QUANDO USARE APPROCCIO SOCRATICO:**
+- Domande concettuali ("perché?", "ha senso?", "è giusto?")
+- Domande aperte senza risposta univoca
+- L'utente sta esplorando un tema nuovo
+- Vuoi far emergere contraddizioni o tensioni
+
+**REGOLA D'ORO:**
+1. SE la domanda è fattuale → rispondi con chiarezza, precisione, dati
+2. SE la domanda è concettuale → usa domande socratiche per guidare
+3. PUOI mescolare: rispondere ai fatti E poi fare una domanda socratica
+
+**STRUTTURA CONSIGLIATA PER RISPOSTE DIRETTE:**
+1. Risposta chiara e diretta alla domanda
+2. Eventuali dati/specifiche tecniche
+3. Una domanda di approfondimento (se pertinente)
+
+**STRUTTURA CONSIGLIATA PER APPROCCIO SOCRATICO:**
+1. Apertura: analogia o esperimento mentale (NON una domanda, ma un'osservazione)
+2. Riferimento a un'evidenza del testo: "Nel testo hai evidenziato che..."
+3. Tensione: un paradosso o un controesempio che mette in crisi le risposte facili
+4. Domanda finale: UNA domanda concreta, mirata, che invita l'utente a prendere posizione
+
+NON correggere mai direttamente l'utente - anche quando rispondi, mantieni tono costruttivo.
+NON rispondere alla domanda dell'utente se è concettuale - aiutalo a trovare la risposta da solo.
+Se è fattuale, rispondi con precisione.
+
+Rispondi in italiano, colloquiale ma rigoroso."""}]
     
-    print(f"\n{Colors.GREEN}📝 DOMANDA:{Colors.END}", flush=True)
-    print_wrapped(domanda, color=Colors.CYAN, prefix="")
-    print(f"\n{Colors.DIM}Dialogo libero. Quando hai la risposta definitiva, usa:{Colors.END}", flush=True)
-    print(f"   {Colors.GREEN}/salva \"la tua risposta\"{Colors.END}", flush=True)
-    print(f"   {Colors.YELLOW}/salta{Colors.END} per saltare questa evidenza", flush=True)
-    print(f"   {Colors.YELLOW}/pausa{Colors.END} per salvare e uscire", flush=True)
+    risposta_llm = call_llm(build_system(), msg)
+    
+    print(f"\n{Colors.CYAN}🤖 {risposta_llm}{Colors.END}", flush=True)
+    print(flush=True)
+    
+    print(f"{Colors.DIM}📝 Comandi disponibili:{Colors.END}", flush=True)
+    print(f"   {Colors.GREEN}/salva \"risposta\"{Colors.END} - salva la discussione", flush=True)
+    print(f"   {Colors.YELLOW}/salta{Colors.END} - salta questa domanda", flush=True)
+    print(f"   {Colors.YELLOW}/pausa{Colors.END} - salva e esci", flush=True)
+    print(flush=True)
     
     stato["domanda_corrente"] = domanda
-    stato["evidenziazione_corrente"] = ev
+    stato["evidenziazione_corrente"] = domanda
     stato["storico_chat"] = []
     save_stato(stato)
     chat_libera()
 
 def chat_libera():
-    """Dialogo interattivo durante la chat"""
+    """Chat interattiva con approccio ibrido: risposte dirette o socratiche"""
     stato = load_stato()
-    ev = stato["evidenziazione_corrente"]
     domanda = stato["domanda_corrente"]
     file_path = Path(stato.get("file_path", stato["file_corrente"]))
+    evidenze = stato.get("evidenziazioni", [])
+    idx = stato.get("indice", 0)
     
     while True:
         user_input = safe_input_semplice(f"{Colors.GREEN}tu> {Colors.END}").strip()
@@ -786,25 +812,25 @@ def chat_libera():
             continue
         
         if user_input.lower() == "/salta":
-            print(f"{Colors.YELLOW}⏭️ Evidenza saltata: {ev}{Colors.END}", flush=True)
+            print(f"{Colors.YELLOW}⏭️ Domanda saltata: {domanda}{Colors.END}", flush=True)
             stato["indice"] += 1
             stato["domanda_corrente"] = None
             stato["evidenziazione_corrente"] = None
             stato["storico_chat"] = []
             save_stato(stato)
-            if stato["indice"] < len(stato.get("evidenziazioni", [])):
+            if stato["indice"] < len(evidenze):
                 avvia_evidenziazione()
             else:
-                print(f"\n{Colors.GREEN}🎉 Tutte le evidenze discusse/saltate!{Colors.END}", flush=True)
+                print(f"\n{Colors.GREEN}🎉 Tutte le domande discusse/saltate!{Colors.END}", flush=True)
             return
         
         if user_input.lower() == "/pausa":
             salva_checkpoint("chat", stato.get("file_corrente"), {
                 "indice": stato.get("indice", 0),
-                "evidenziazioni": stato.get("evidenziazioni", []),
+                "evidenziazioni": evidenze,
                 "storico_chat": stato.get("storico_chat", []),
                 "domanda_corrente": domanda,
-                "evidenziazione_corrente": ev
+                "evidenziazione_corrente": domanda
             })
             print(f"{Colors.CYAN}⏸️ Sessione salvata. Usa /chat per riprendere.{Colors.END}", flush=True)
             reset_stato()
@@ -821,10 +847,9 @@ def chat_libera():
             testo_conv = "\n".join(storico)
             
             if testo_conv.strip():
-                prompt_riassunto = f"""Genera un riassunto NARRATIVO e TECNICO della seguente conversazione socratica.
+                prompt_riassunto = f"""Genera un riassunto NARRATIVO e TECNICO della seguente conversazione.
 
-EVIDENZA: {ev}
-DOMANDA INIZIALE: {domanda}
+DOMANDA: {domanda}
 
 CONVERSAZIONE:
 {testo_conv}
@@ -832,7 +857,7 @@ CONVERSAZIONE:
 REGOLE:
 1. Scrivi in forma narrativa (nessun punto elenco, nessuna lista)
 2. Usa linguaggio tecnico preciso ma non divulgativo
-3. Racconta: la posizione iniziale dell'utente, le obiezioni dell'LLM, l'evoluzione del dialogo, gli accordi/disaccordi, le domande aperte
+3. Racconta: la posizione iniziale dell'utente, le risposte/domande dell'LLM, l'evoluzione del dialogo, gli accordi/disaccordi, le domande aperte
 4. Mantieni le sfumature e le tensioni emerse
 5. Lunghezza proporzionale alla complessità della discussione
 
@@ -841,10 +866,9 @@ Rispondi SOLO con il riassunto, in italiano."""
             else:
                 riassunto_conv = "Nessuna conversazione registrata."
             
-            # Aggiorna il file con la discussione
+            # Aggiorna il file
             contenuto_attuale = read_file_safe(file_path)
-            nuovo_blocco = f"\n\n### Evidenza {stato['indice']+1}: {ev}\n"
-            nuovo_blocco += f"**Domanda:** {domanda}\n\n"
+            nuovo_blocco = f"\n\n### Discussione {idx+1}: {domanda}\n\n"
             nuovo_blocco += f"**Conversazione:**\n```\n{testo_conv}\n```\n\n"
             nuovo_blocco += f"**Riassunto della conversazione:**\n\n{riassunto_conv}\n\n"
             nuovo_blocco += f"**Risposta finale:** {risposta_finale}\n\n---\n"
@@ -858,7 +882,7 @@ Rispondi SOLO con il riassunto, in italiano."""
                 contenuto_attuale += "\n## 🗨️ DISCUSSIONE SOCRATICA\n" + nuovo_blocco
             
             write_file_safe(file_path, contenuto_attuale)
-            print(f"{Colors.GREEN}✅ Salvato nel file: domanda, conversazione, riassunto narrativo, risposta.{Colors.END}", flush=True)
+            print(f"{Colors.GREEN}✅ Salvato nel file: conversazione, riassunto, risposta.{Colors.END}", flush=True)
             print(flush=True)
             
             stato["indice"] += 1
@@ -868,11 +892,11 @@ Rispondi SOLO con il riassunto, in italiano."""
             stato["storico_chat"] = []
             save_stato(stato)
             
-            if stato["indice"] < len(stato.get("evidenziazioni", [])):
+            if stato["indice"] < len(evidenze):
                 avvia_evidenziazione()
             else:
-                print(f"\n{Colors.GREEN}🎉 Tutte le evidenze discusse e salvate!{Colors.END}", flush=True)
-                print(f"   Usa /fine per il riassunto finale unificato (IL MIO SAPERE).", flush=True)
+                print(f"\n{Colors.GREEN}🎉 Tutte le domande discusse e salvate!{Colors.END}", flush=True)
+                print(f"   Usa /promuovi Titolo per creare la pagina wiki.", flush=True)
                 print(flush=True)
             return
         
@@ -880,19 +904,76 @@ Rispondi SOLO con il riassunto, in italiano."""
             cmd_archivia()
             return
         
+        # Intercetta comandi slash inviati per errore durante la chat
+        if user_input.startswith("/"):
+            parts_cmd = user_input.split(maxsplit=1)
+            cmd_inner = parts_cmd[0].lower()
+            arg_inner = parts_cmd[1] if len(parts_cmd) > 1 else ""
+            if cmd_inner == "/list":
+                cmd_list(arg_inner if arg_inner else None)
+            elif cmd_inner == "/stato":
+                cmd_stato()
+            elif cmd_inner == "/lint":
+                cmd_lint()
+            elif cmd_inner == "/backup":
+                cmd_backup()
+            else:
+                print(f"{Colors.YELLOW}⚠️  Comando '{cmd_inner}' non disponibile durante /chat.{Colors.END}", flush=True)
+                print(f"   Comandi validi in chat: /salva /salta /pausa /archivia /list /stato", flush=True)
+            continue
+        
         else:
             storico = stato.get("storico_chat", [])
             storico.append(f"Utente: {user_input}")
             
-            msg_chat = [{"role":"user","content":f"""Evidenza: {ev}
-Domanda iniziale: {domanda}
-Storico:
-{chr(10).join(storico[-15:])}
-Ora l'utente dice: "{user_input}"
+            # Leggi le evidenze per includerle nel contesto
+            file_path = Path(stato.get("file_path", stato["file_corrente"]))
+            evidenze_context = ""
+            if file_path.exists():
+                contenuto = read_file_safe(file_path)
+                evidenze_raw = estrai_evidenze_da_sezione(contenuto)
+                if evidenze_raw and "(nessuna" not in evidenze_raw:
+                    blocchi = re.findall(r'>>([\s\S]*?)<<', evidenze_raw)
+                    if blocchi:
+                        evidenze_context = "\n".join([f"- {b.strip()}" for b in blocchi[:3]])
+            
+            # ============ VERSIONE IBRIDA - CHAT CON RISPOSTE DIRETTE ============
+            msg_chat = [{
+                "role": "user",
+                "content": f"""Domanda originale: {domanda}
 
-Rispondi in modo socratico, colloquiale ma rigoroso.
-Se utile per la discussione, puoi cercare informazioni esterne (dati, esempi, controesempi) usando "🔍 RICERCA: [query]".
-Mantieni un tono costruttivo e critico."""}]
+EVIDENZE DAL TESTO (marcate dall'utente):
+{evidenze_context if evidenze_context else "(nessuna evidenza marcata)"}
+
+STORICO CONVERSAZIONE:
+{chr(10).join(storico[-15:])}
+
+Ultimo messaggio dell'utente: "{user_input}"
+
+=== ISTRUZIONI PER IL MODELLO ===
+
+Tu sei un assistente ibrido che combina **approccio socratico** e **risposte dirette**.
+
+**QUANDO RISPONDERE DIRETTAMENTE:**
+- Domande fattuali ("quando e successo?", "quanti sono?", "chi ha detto?")
+- Richieste di chiarimento tecnico ("come funziona?", "qual e la differenza tra X e Y?")
+- Domande su definizioni ("cos'e esattamente...?")
+- L'utente chiede esplicitamente una risposta
+
+**QUANDO USARE APPROCCIO SOCRATICO:**
+- Domande concettuali ("perche?", "ha senso?", "e giusto?")
+- Domande aperte senza risposta univoca
+- L'utente sta esplorando un tema nuovo
+- Vuoi far emergere contraddizioni o tensioni
+
+**REGOLA D'ORO:**
+1. SE la domanda e fattuale risppondi con chiarezza, precisione, dati
+2. SE la domanda e concettuale usa domande socratiche per guidare
+3. PUOI mescolare: rispondere ai fatti E poi fare una domanda socratica
+
+Rispondi in italiano, colloquiale ma rigoroso."""
+            }]
+            # ============ FINE MODIFICA ============
             
             risp_llm = call_llm(build_system(enable_search=True), msg_chat)
             
@@ -910,11 +991,10 @@ Mantieni un tono costruttivo e critico."""}]
             print(flush=True)
 
 # ============================================================
-# COMANDO /fine (riassunto finale)
+# COMANDO /fine (RIASSUNTO FINALE)
 # ============================================================
 
 def cmd_fine():
-    """Genera riassunto narrativo unificato di tutte le evidenze (IL MIO SAPERE)"""
     stato = load_stato()
     if not stato.get("file_corrente"):
         print(f"{Colors.RED}❌ Nessun file attivo{Colors.END}", flush=True)
@@ -922,44 +1002,57 @@ def cmd_fine():
     
     file_path = Path(stato.get("file_path", stato["file_corrente"]))
     if not file_path.exists():
-        file_path = RAW / stato["file_corrente"]
+        file_path = SANDBOX / stato["file_corrente"]
         if not file_path.exists():
-            file_path = SANDBOX / stato["file_corrente"]
+            file_path = RAW / stato["file_corrente"]
         if not file_path.exists():
             print(f"{Colors.RED}❌ File non trovato{Colors.END}", flush=True)
             return
     
     contenuto = read_file_safe(file_path)
     
-    if "## ✅ IL MIO SAPERE" in contenuto and "NON ANCORA GENERATO" not in contenuto:
+    if "## ✅ IL MIO SAPERE" in contenuto and "NON ANCORA GENERATO" not in contenuto and "Lascia vuoto" not in contenuto.split("## ✅ IL MIO SAPERE")[-1][:50]:
         print(f"{Colors.YELLOW}⚠️ Il riassunto finale esiste già. Non lo rigenero.{Colors.END}", flush=True)
         return
     
-    # Estrai le discussioni salvate
-    riassunti_evidenze = []
-    blocchi = re.findall(r'### Evidenza \d+: (.+?)\n\*\*Domanda:\*\* (.+?)\n\*\*Riassunto della conversazione:\*\*\n\n(.*?)\n\n\*\*Risposta finale:\*\* (.+?)(?:\n---|$)', contenuto, re.DOTALL)
-    
-    for ev, dom, riass, risp in blocchi:
-        riassunti_evidenze.append(f"**{ev}**\nDomanda: {dom}\nDiscussione: {riass}\nRisposta: {risp}")
-    
-    if not riassunti_evidenze:
-        print(f"{Colors.YELLOW}⚠️ Non trovate evidenze salvate. Esegui prima /chat e /salva.{Colors.END}", flush=True)
+    riassunti_discussioni = []
+    # Estrai ogni blocco ### Discussione N: ... fino al prossimo o fine file
+    sezioni = re.split(r'(?=### Discussione \d+:)', contenuto)
+    for sezione in sezioni:
+        if not sezione.strip().startswith('### Discussione'):
+            continue
+        # Domanda: prima riga dopo "### Discussione N: "
+        dom_match = re.match(r'### Discussione \d+: (.+?)\n', sezione)
+        if not dom_match:
+            continue
+        domanda_testo = dom_match.group(1).strip()
+        # Riassunto: testo dopo "**Riassunto della conversazione:**" (tollerante a newline multipli)
+        riass_match = re.search(r'\*\*Riassunto della conversazione:\*\*\s*\n+(.*?)(?=\n\*\*Risposta finale:|\n---)', sezione, re.DOTALL)
+        riassunto_testo = riass_match.group(1).strip() if riass_match else ""
+        # Risposta finale
+        risp_match = re.search(r'\*\*Risposta finale:\*\*\s*(.+?)(?=\n---|$)', sezione, re.DOTALL)
+        risposta_testo = risp_match.group(1).strip() if risp_match else ""
+        if domanda_testo:
+            riassunti_discussioni.append(f"**Domanda:** {domanda_testo}\n**Riassunto:** {riassunto_testo}\n**Risposta:** {risposta_testo}")
+
+    if not riassunti_discussioni:
+        print(f"{Colors.YELLOW}⚠️ Non trovate discussioni salvate. Esegui prima /chat e /salva.{Colors.END}", flush=True)
         return
     
-    testo_riassunti = "\n\n---\n\n".join(riassunti_evidenze)
+    testo_riassunti = "\n\n---\n\n".join(riassunti_discussioni)
     
-    prompt_unificato = f"""Genera un RIASSUNTO NARRATIVO UNIFICATO di TUTTE le seguenti evidenze discusse.
+    prompt_unificato = f"""Genera un RIASSUNTO NARRATIVO UNIFICATO di TUTTE le seguenti discussioni.
 
-EVIDENZE:
+DISCUSSIONI:
 {testo_riassunti}
 
 REGOLE:
 1. Scrivi in prima persona ("Ho compreso che...", "È emerso che...")
 2. Forma narrativa fluida (nessun punto elenco, nessuna lista)
 3. Usa linguaggio tecnico preciso ma non divulgativo
-4. Trova un FILO LOGICO che collega le diverse evidenze tra loro
+4. Trova un FILO LOGICO che collega le diverse discussioni
 5. Metti in luce le tensioni ricorrenti, le scoperte concettuali, i punti ancora aperti
-6. Lunghezza proporzionale alla complessità (minimo 1000 caratteri)
+6. Lunghezza proporzionale alla complessità (minimo 500 caratteri)
 
 Rispondi SOLO con il riassunto, in italiano."""
     
@@ -977,300 +1070,126 @@ Rispondi SOLO con il riassunto, in italiano."""
     save_stato(stato)
 
 # ============================================================
-# COMANDO /analizza (INGEST dopo la discussione)
-# ============================================================
-
-def cmd_ingest_diretto(src: Path, contenuto: str):
-    """Ingest diretto per file piccoli (≤ CHUNK_SIZE)"""
-    print(f"\n{Colors.GREEN}📥 Ingest diretto: {src.name}{Colors.END}", flush=True)
-    
-    out_name = f"sdbx_{src.stem}_V1.md"
-    out_file = SANDBOX / out_name
-    
-    msg = [{"role": "user", "content": f"""Analizza questa fonte e scrivi un riassunto ESAUSTIVO in italiano che segua fedelmente la struttura e il filo logico del documento originale.
-
-Fonte: {src.name}
-Contenuto: {contenuto[:15000]}
-
-REGOLE FONDAMENTALI:
-1. Mantieni i termini tecnici originali
-2. Segui la struttura originale
-3. Flusso narrativo continuo
-4. Preserva i dati quantitativi
-5. Taglia il superfluo
-
-STRUTTURA RICHIESTA NEL FILE:
-
-# 📌 SINTESI ESAUSTIVA
-
-(riassunto in paragrafi continui, seguendo l'ordine originale del documento)
-
----
-
-## 🗨️ DISCUSSIONE SOCRATICA
-
-(Lascia vuoto)
-
----
-
-## ✅ IL MIO SAPERE
-
-(Lascia vuoto)
-"""}]
-    
-    risposta = call_llm(build_system(), msg)
-    full = f"""---
-stato: BOZZA
-lingua: italiano
-fonte: {src.name}
-data_ingest: {date.today()}
----
-
-{risposta}
-"""
-    write_file_safe(out_file, full)
-    print(f"{Colors.GREEN}✅ Sandbox creato: {out_name}{Colors.END}", flush=True)
-    print(f"{Colors.YELLOW}✏️ Ora aggiungi ??...?? nel file e usa /chat{Colors.END}", flush=True)
-    
-    stato = load_stato()
-    stato["fase"] = "INGEST_COMPLETATO"
-    stato["file_corrente"] = out_name
-    save_stato(stato)
-
-def cmd_analizza(filepath: str):
-    """Analizza un file (dopo la discussione) e crea sandbox per la wiki"""
-    src = RAW / filepath
-    if not src.exists():
-        print(f"{Colors.RED}❌ File non trovato in raw/: {filepath}{Colors.END}", flush=True)
-        return
-    
-    contenuto = read_file_safe(src)
-    parole = len(contenuto.split())
-    num_chunk = (parole // CHUNK_SIZE) + (1 if parole % CHUNK_SIZE > 0 else 0)
-    
-    print(f"\n{Colors.BLUE}{'='*60}{Colors.END}", flush=True)
-    print(f"{Colors.BOLD}📊 ANALISI FILE: {src.name}{Colors.END}", flush=True)
-    print(f"{Colors.BLUE}{'='*60}{Colors.END}\n", flush=True)
-    
-    print(f"{Colors.CYAN}📏 Dimensioni:{Colors.END}", flush=True)
-    print(f"   - Parole: {parole}", flush=True)
-    print(f"   - Chunk necessari: {num_chunk}\n", flush=True)
-    
-    if parole <= CHUNK_SIZE:
-        print(f"{Colors.GREEN}✅ File ottimale ({parole} parole ≤ {CHUNK_SIZE}).{Colors.END}", flush=True)
-    else:
-        print(f"{Colors.YELLOW}⚠️ File lungo ({parole} parole > {CHUNK_SIZE}). Sarà suddiviso in {num_chunk} chunk.{Colors.END}", flush=True)
-    
-    print(f"\n{Colors.YELLOW}📌 Procedere con l'ingest?{Colors.END}", flush=True)
-    scelta = safe_input_semplice(f"{Colors.CYAN}👉 (s/n): {Colors.END}").lower()
-    
-    if scelta != 's':
-        print(f"{Colors.RED}❌ Operazione annullata.{Colors.END}", flush=True)
-        return
-    
-    if parole <= CHUNK_SIZE:
-        cmd_ingest_diretto(src, contenuto)
-    else:
-        # ingest_chunk sarebbe qui
-        pass
-
-# ============================================================
 # COMANDO /promuovi (CREAZIONE WIKI)
 # ============================================================
 
 def cmd_promuovi(titolo: str):
-    """Promuove il sandbox a pagina wiki con nuova struttura"""
+    """Promuove il sandbox a wiki spostandolo direttamente nel wiki/."""
+    titolo = titolo.strip().strip('"').strip("'")
     stato = load_stato()
     if not stato.get("file_corrente"):
-        print(f"{Colors.RED}❌ Nessun file sandbox attivo. Esegui /analizza prima.{Colors.END}", flush=True)
+        print(f"{Colors.RED}❌ Nessun file sandbox attivo.{Colors.END}", flush=True)
         return
-    
+
     sandbox_path = SANDBOX / stato["file_corrente"]
     if not sandbox_path.exists():
-        # Prova a cercare in raw/
-        raw_path = RAW / stato["file_corrente"]
-        if raw_path.exists():
-            sandbox_path = raw_path
-        else:
-            print(f"{Colors.RED}❌ File non trovato: {sandbox_path}{Colors.END}", flush=True)
-            return
+        print(f"{Colors.RED}❌ File sandbox non trovato: {sandbox_path}{Colors.END}", flush=True)
+        return
 
     contenuto_sandbox = read_file_safe(sandbox_path)
 
-    sintesi_esaustiva = estrai_sezione(contenuto_sandbox, r'# 📌 SINTESI ESAUSTIVA')
-    il_mio_sapere = estrai_sezione(contenuto_sandbox, r'## ✅ IL MIO SAPERE')
 
-    if not il_mio_sapere:
-        print(f"{Colors.YELLOW}⚠️ Sezione 'IL MIO SAPERE' non trovata. Esegui /fine prima di promuovere.{Colors.END}", flush=True)
-        print(f"   Generazione automatica in corso...", flush=True)
-        cmd_fine()
-        contenuto_sandbox = read_file_safe(sandbox_path)
-        il_mio_sapere = estrai_sezione(contenuto_sandbox, r'## ✅ IL MIO SAPERE')
 
-    # Verifica se la pagina esiste già
+    # Gestione versioni
     slug_base = titolo.lower().replace(" ", "_").replace("-", "_")
     wiki_path_base = WIKI / f"{slug_base}.md"
-    
-    titolo_finale = titolo
-    wikilink_originale = None
-    
+
     if wiki_path_base.exists():
-        data_str = datetime.now().strftime("%Y-%m-%d")
-        versioni_esistenti = list(WIKI.glob(f"{slug_base}_v*.md")) + list(WIKI.glob(f"{slug_base}_*.md"))
+        versioni_esistenti = list(WIKI.glob(f"{slug_base}_v*.md"))
         if versioni_esistenti:
-            numeri = []
-            for v in versioni_esistenti:
-                match = re.search(r'_v(\d+)', v.name)
-                if match:
-                    numeri.append(int(match.group(1)))
-            prossimo_numero = max(numeri) + 1 if numeri else 2
-            titolo_finale = f"{titolo} v{prossimo_numero}"
-            slug_finale = f"{slug_base}_v{prossimo_numero}"
+            numeri = [int(m.group(1)) for v in versioni_esistenti if (m := re.search(r'_v(\d+)', v.name))]
+            prossimo = max(numeri) + 1 if numeri else 2
+            titolo_finale = f"{titolo} v{prossimo}"
+            wiki_path = WIKI / f"{slug_base}_v{prossimo}.md"
         else:
-            titolo_finale = f"{titolo} ({data_str})"
-            slug_finale = f"{slug_base}_{data_str.replace('-', '')}"
-        
-        wiki_path = WIKI / f"{slug_finale}.md"
-        wikilink_originale = titolo
-        
-        print(f"{Colors.YELLOW}⚠️ Pagina '{titolo}' già esistente.{Colors.END}", flush=True)
-        print(f"   Creerò una nuova versione: '{titolo_finale}'", flush=True)
-        print(f"   Con wikilink alla versione originale: [[{titolo}]]", flush=True)
-        print(flush=True)
+            data_str = datetime.now().strftime("%Y%m%d")
+            titolo_finale = f"{titolo} ({date.today()})"
+            wiki_path = WIKI / f"{slug_base}_{data_str}.md"
+        print(f"{Colors.YELLOW}⚠️ Pagina già esistente. Creo versione: {titolo_finale}{Colors.END}", flush=True)
     else:
         wiki_path = wiki_path_base
         titolo_finale = titolo
 
-    # Proposta dominio/tipo
-    print(f"{Colors.CYAN}🤖 Analizzo il contenuto per proporre dominio e tipo...{Colors.END}", flush=True)
+    # Dati dal frontmatter del sandbox
+    fonti_match = re.search(r'fonte: (.*?)(?:\n|$)', contenuto_sandbox)
+    fonti_str = f"[[{fonti_match.group(1).strip()}]]" if fonti_match else ""
+    discussioni = re.findall(r'### Discussione \d+:', contenuto_sandbox)
+    cicli_spb = len(discussioni)
+
+    # Chiedi dominio e tipo
     domini_validi = ["Bitcoin", "Cultura", "Economia", "Generale", "Geopolitica", "Storia", "Tecnologia"]
     tipi_validi = ["appunti", "articolo", "paper", "podcast", "post"]
-    
-    prompt_frontmatter = f"""Leggi il seguente riassunto finale, poi proponi un dominio e un tipo per una pagina wiki.
 
-DOMINI DISPONIBILI: {', '.join(domini_validi)}
-TIPI DISPONIBILI: {', '.join(tipi_validi)}
-
-RIASSUNTO FINALE:
-{il_mio_sapere[:1500]}
-
-Rispondi SOLO in formato JSON:
-{{"dominio": "uno dei domini", "tipo": "uno dei tipi"}}
-"""
-    msg = [{"role": "user", "content": prompt_frontmatter}]
-    proposta_json = call_llm(build_system(), msg)
-    try:
-        proposta = json.loads(proposta_json)
-        dominio_proposto = proposta.get("dominio", "Generale")
-        tipo_proposto = proposta.get("tipo", "articolo")
-        if dominio_proposto not in domini_validi:
-            dominio_proposto = "Generale"
-        if tipo_proposto not in tipi_validi:
-            tipo_proposto = "articolo"
-    except:
-        dominio_proposto = "Generale"
-        tipo_proposto = "articolo"
-
-    # Genera la struttura wiki dalla SINTESI ESAUSTIVA
-    print(f"{Colors.CYAN}🤖 Generazione struttura wiki dalla SINTESI ESAUSTIVA...{Colors.END}", flush=True)
-    
-    prompt_wiki = f"""Analizza la seguente SINTESI ESAUSTIVA e genera una struttura wiki.
-
-SINTESI ESAUSTIVA:
-{sintesi_esaustiva[:8000]}
-
-Genera i seguenti elementi:
-
-1. **TL;DR** - Una frase che riassume la tesi centrale
-
-2. **Mappa concettuale** - In formato:
-   - **Problema:** ...
-   - **Argomento:** ...
-   - **Conclusione:** ...
-   - **Implicazione per te:** ...
-
-3. **Punti chiave** - Massimo 7, ciascuno una frase, in formato numerato
-
-4. **Citazioni rilevanti** - Se presenti nel testo, usa > "..."
-   Se non ci sono citazioni esplicite, lascia vuoto
-
-5. **Entità collegate** - Wiki-link [[...]] a concetti correlati esistenti (formato: [[X]], [[Y]])
-
-6. **Concetti generati** - Wiki-link [[...]] a nuovi concetti emersi (formato: [[A]], [[B]])
-
-Rispondi SOLO con i contenuti, senza commenti aggiuntivi, usando ESATTAMENTE i titoli delle sezioni come nell'esempio.
-"""
-    
-    wiki_content_raw = call_llm(build_system(), [{"role": "user", "content": prompt_wiki}])
-    
-    # Estrai i componenti dalla risposta
-    tl_dr = re.search(r'## TL;DR\n(.*?)(?=\n##|$)', wiki_content_raw, re.DOTALL)
-    tl_dr = tl_dr.group(1).strip() if tl_dr else ""
-
-    mappa = re.search(r'## Mappa concettuale\n(.*?)(?=\n##|$)', wiki_content_raw, re.DOTALL)
-    mappa = mappa.group(1).strip() if mappa else ""
-
-    punti_chiave = re.search(r'## Punti chiave\n(.*?)(?=\n##|$)', wiki_content_raw, re.DOTALL)
-    punti_chiave = punti_chiave.group(1).strip() if punti_chiave else ""
-
-    citazioni = re.search(r'## Citazioni rilevanti\n(.*?)(?=\n##|$)', wiki_content_raw, re.DOTALL)
-    citazioni = citazioni.group(1).strip() if citazioni else ""
-
-    entita_collegate = re.search(r'## Entità collegate\n(.*?)(?=\n##|$)', wiki_content_raw, re.DOTALL)
-    entita_collegate = entita_collegate.group(1).strip() if entita_collegate else ""
-
-    concetti_generati = re.search(r'## Concetti generati\n(.*?)(?=\n##|$)', wiki_content_raw, re.DOTALL)
-    concetti_generati = concetti_generati.group(1).strip() if concetti_generati else ""
-
-    # Menu interattivo per dominio e tipo
     print(f"\n{Colors.BLUE}{'='*60}{Colors.END}", flush=True)
-    print(f"{Colors.BOLD}📝 CREAZIONE NUOVA PAGINA WIKI{Colors.END}", flush=True)
-    print(f"{Colors.BLUE}{'='*60}{Colors.END}\n", flush=True)
+    print(f"{Colors.BOLD}📝 PROMOZIONE A WIKI{Colors.END}", flush=True)
+    print(f"{Colors.BLUE}{'='*60}{Colors.END}", flush=True)
     print(f"{Colors.GREEN}Titolo:{Colors.END} {titolo_finale}", flush=True)
-    if wikilink_originale:
-        print(f"{Colors.CYAN}🔗 Link alla versione originale: [[{wikilink_originale}]]{Colors.END}", flush=True)
 
     print(f"\n{Colors.YELLOW}📌 Scegli il DOMINIO:{Colors.END}", flush=True)
     for i, d in enumerate(domini_validi, 1):
-        default = " (proposto)" if d == dominio_proposto else ""
-        print(f"  {i}. {d}{default}", flush=True)
+        print(f"  {i}. {d}", flush=True)
     print(f"  {len(domini_validi)+1}. Inserisci manualmente", flush=True)
-    scelta_dom = safe_input_semplice(f"{Colors.CYAN}👉 Numero (invio per {dominio_proposto}): {Colors.END}").strip()
+    scelta_dom = safe_input_semplice(f"{Colors.CYAN}👉 Numero (invio per Generale): {Colors.END}").strip()
     if scelta_dom == "":
-        dominio_finale = dominio_proposto
+        dominio_finale = "Generale"
     elif scelta_dom.isdigit() and 1 <= int(scelta_dom) <= len(domini_validi):
         dominio_finale = domini_validi[int(scelta_dom)-1]
-    elif scelta_dom == str(len(domini_validi)+1):
-        dominio_finale = safe_input_semplice(f"{Colors.CYAN}Dominio: {Colors.END}").strip() or dominio_proposto
+    elif scelta_dom.isdigit() and int(scelta_dom) == len(domini_validi)+1:
+        dominio_finale = safe_input_semplice(f"{Colors.CYAN}👉 Dominio: {Colors.END}").strip() or "Generale"
     else:
-        dominio_finale = dominio_proposto
+        dominio_finale = "Generale"
 
     print(f"\n{Colors.YELLOW}📌 Scegli il TIPO:{Colors.END}", flush=True)
     for i, t in enumerate(tipi_validi, 1):
-        default = " (proposto)" if t == tipo_proposto else ""
-        print(f"  {i}. {t}{default}", flush=True)
+        print(f"  {i}. {t}", flush=True)
     print(f"  {len(tipi_validi)+1}. Inserisci manualmente", flush=True)
-    scelta_tipo = safe_input_semplice(f"{Colors.CYAN}👉 Numero (invio per {tipo_proposto}): {Colors.END}").strip()
+    scelta_tipo = safe_input_semplice(f"{Colors.CYAN}👉 Numero (invio per articolo): {Colors.END}").strip()
     if scelta_tipo == "":
-        tipo_finale = tipo_proposto
+        tipo_finale = "articolo"
     elif scelta_tipo.isdigit() and 1 <= int(scelta_tipo) <= len(tipi_validi):
         tipo_finale = tipi_validi[int(scelta_tipo)-1]
-    elif scelta_tipo == str(len(tipi_validi)+1):
-        tipo_finale = safe_input_semplice(f"{Colors.CYAN}Tipo: {Colors.END}").strip() or tipo_proposto
+    elif scelta_tipo.isdigit() and int(scelta_tipo) == len(tipi_validi)+1:
+        tipo_finale = safe_input_semplice(f"{Colors.CYAN}👉 Tipo: {Colors.END}").strip() or "articolo"
     else:
-        tipo_finale = tipo_proposto
+        tipo_finale = "articolo"
 
-    # Fonti
-    fonti_match = re.search(r'fonte: (.*?)(?:\n|$)', contenuto_sandbox)
-    fonti = [f.strip() for f in fonti_match.group(1).split(',')] if fonti_match else []
-    fonti_str = ", ".join([f"[[{f}]]" for f in fonti])
-    
-    # Numero di cicli SPB
-    evidenze_risposte = re.findall(r'### Evidenza \d+:', contenuto_sandbox)
-    cicli_spb = len(evidenze_risposte)
+    # --- Pulizia contenuto sandbox ---
+    # Normalizza righe (rimuovi spazi trailing, collassa righe vuote multiple)
+    def _clean(text):
+        lines = [l.rstrip() for l in text.split('\n')]
+        out, empty = [], 0
+        for l in lines:
+            if l == '':
+                empty += 1
+                if empty <= 1:
+                    out.append(l)
+            else:
+                empty = 0
+                out.append(l)
+        return '\n'.join(out).strip()
 
-    # Costruisci il contenuto del wiki
-    wiki_content = f"""---
+    contenuto_sandbox = _clean(contenuto_sandbox)
+
+    # Rimuovi il frontmatter YAML esistente (tollerante a spazi trailing su ---)
+    contenuto_senza_fm = re.sub(r'^---\s*\n.*?\n---\s*\n', '', contenuto_sandbox, flags=re.DOTALL).lstrip('\n')
+
+    # Rimuovi sezioni di lavoro sandbox che non appartengono al wiki
+    sezioni_da_rimuovere = [
+        r'## 📌 EVIDENZE DA DISCUTERE\n.*?(?=\n## |\Z)',
+        r'## ❓ DOMANDE DA DISCUTERE\n.*?(?=\n## |\Z)',
+        r'## 🗨️ DISCUSSIONE SOCRATICA\n.*?(?=\n### Discussione|\n## |\Z)',
+        r'\(Lascia vuoto[^)]*\)',
+        r'\*\*Riassunto della conversazione:\*\*\s*\n+.*?(?=\n\*\*Risposta finale:|\n---)',
+        r'## ✅ IL MIO SAPERE\n.*?(\Z)',
+        r'# SINTESI ESAUSTIVA\n',
+    ]
+    for pattern in sezioni_da_rimuovere:
+        contenuto_senza_fm = re.sub(pattern, '', contenuto_senza_fm, flags=re.DOTALL)
+
+    # Collassa nuovamente righe vuote dopo rimozioni
+    contenuto_senza_fm = re.sub(r'\n{3,}', '\n\n', contenuto_senza_fm).strip()
+
+    nuovo_frontmatter = f"""---
 titolo: {titolo_finale}
 dominio: {dominio_finale}
 tipo: {tipo_finale}
@@ -1280,72 +1199,37 @@ cicli_spb: {cicli_spb}
 fonti: {fonti_str}
 ---
 
-## TL;DR
-
-{tl_dr}
-
-## Mappa concettuale
-
-{mappa}
-
-## Punti chiave
-
-{punti_chiave}
-
-## Sviluppo analitico
-
-{sintesi_esaustiva}
-
-## Citazioni rilevanti
-
-{citazioni}
-
-## Entità collegate
-
-{entita_collegate}
-
-## Concetti generati
-
-{concetti_generati}
-
----
-
-## ✅ IL MIO SAPERE
-
-{il_mio_sapere}
 """
+    wiki_content = nuovo_frontmatter + contenuto_senza_fm
 
-    # Salva wiki
-    slug_finale = titolo_finale.lower().replace(" ", "_").replace("-", "_")
-    wiki_path = WIKI / f"{slug_finale}.md"
+    # Scrivi e sposta
     write_file_safe(wiki_path, wiki_content)
+    arch_path = ARCHIVIATI / sandbox_path.name
+    shutil.move(str(sandbox_path), str(arch_path))
 
+    # Aggiorna indice e log
     with INDEX.open("a", encoding='utf-8') as f:
         f.write(f"| [[{titolo_finale}]] | {dominio_finale} | {tipo_finale} | {date.today()} |\n")
     with LOG.open("a", encoding='utf-8') as f:
         f.write(f"\n## [{date.today()}] promuovi | {titolo_finale}\n")
-        f.write(f"- File sandbox: {stato['file_corrente']}\n")
         f.write(f"- Cicli SPB: {cicli_spb}\n")
         f.write(f"- Pagina wiki: {wiki_path.name}\n")
-        if wikilink_originale:
-            f.write(f"- Wikilink a versione originale: [[{wikilink_originale}]]\n")
+        f.write(f"- Sandbox archiviato: {arch_path.name}\n")
 
-    print(f"\n{Colors.GREEN}✅ Pagina wiki creata: {wiki_path}{Colors.END}", flush=True)
+    print(f"\n{Colors.GREEN}✅ Wiki creato: {wiki_path}{Colors.END}", flush=True)
+    print(f"{Colors.GREEN}✅ Sandbox archiviato: {arch_path.name}{Colors.END}", flush=True)
     print(f"{Colors.GREEN}✅ Indice e log aggiornati.{Colors.END}", flush=True)
-    
-    # Archivia il sandbox
-    if sandbox_path.exists():
-        arch_path = ARCHIVIATI / sandbox_path.name
-        shutil.move(str(sandbox_path), str(arch_path))
-        print(f"{Colors.YELLOW}🗂️ Sandbox archiviato in: {arch_path}{Colors.END}", flush=True)
-    
     print(flush=True)
     reset_stato()
     costruisci_indice()
 
 # ============================================================
-# COMANDI ESISTENTI (list, riprendi, archivia, query, lint, backup, stato)
+# ALTRI COMANDI
 # ============================================================
+
+def estrai_sezione(contenuto: str, pattern: str) -> str:
+    match = re.search(pattern + r'\n\n(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
+    return match.group(1).strip() if match else ""
 
 def cmd_list(cartella: str = None):
     cartelle = {"asset":ASSET,"clippings":CLIPPINGS,"backups":BACKUPS,"raw":RAW,"sandbox":SANDBOX,"wiki":WIKI}
@@ -1368,21 +1252,17 @@ def cmd_list(cartella: str = None):
     print(flush=True)
 
 def cmd_riprendi(filename: str):
-    """Ripristina un file sandbox archiviato"""
     if not filename.endswith(".md"):
         filename = filename + ".md"
     if not filename.startswith("sdbx_"):
         filename = f"sdbx_{filename}"
-    
     src = ARCHIVIATI / filename
     if not src.exists():
-        print(f"{Colors.RED}❌ File non trovato in archiviati/: {filename}{Colors.END}", flush=True)
+        print(f"{Colors.RED}❌ File non trovato in archiviati/{Colors.END}", flush=True)
         return
-    
     dest = SANDBOX / src.name
     shutil.copy2(str(src), str(dest))
     print(f"{Colors.GREEN}✅ File ripristinato: {dest}{Colors.END}", flush=True)
-    
     stato = load_stato()
     stato["file_corrente"] = src.name
     stato["fase"] = "INGEST_COMPLETATO"
@@ -1393,7 +1273,6 @@ def cmd_riprendi(filename: str):
     print(f"{Colors.CYAN}💡 Ora usa /chat per continuare.{Colors.END}", flush=True)
 
 def cmd_archivia():
-    """Archivia la discussione corrente"""
     stato = load_stato()
     if stato.get("file_corrente"):
         src = Path(stato.get("file_path", stato["file_corrente"]))
@@ -1407,7 +1286,6 @@ def cmd_archivia():
     print(f"{Colors.GREEN}✅ Discussione archiviata{Colors.END}", flush=True)
 
 def cmd_query(domanda: str):
-    """Interroga il wiki usando indice leggero + ricerca web"""
     pagine_rilevanti = cerca_nel_wiki(domanda)
     risposta_wiki = None
     fonti_wiki = []
@@ -1417,19 +1295,21 @@ def cmd_query(domanda: str):
         for score, titolo, percorso in pagine_rilevanti:
             contenuto = read_file_safe(Path(percorso))
             sintesi = estrai_sezione(contenuto, r'## Sviluppo analitico')
-            mio_sapere = estrai_sezione(contenuto, r'## ✅ IL MIO SAPERE')
+            mio_sapere = estrai_sezione(contenuto, r'## ✅ Il mio sapere')
+            evidenze = estrai_sezione(contenuto, r'## Le mie evidenze')
             ctx += f"### [[{titolo}]]\n"
             if sintesi:
                 ctx += f"SINTESI: {sintesi[:500]}\n"
+            if evidenze:
+                ctx += f"EVIDENZE: {evidenze[:300]}\n"
             if mio_sapere:
                 ctx += f"CONCLUSIONI: {mio_sapere[:300]}\n"
             ctx += "\n"
             fonti_wiki.append(titolo)
-        
         msg = [{"role":"user","content":f"Domanda: {domanda}\n\nPagine wiki rilevanti:\n{ctx}\nRispondi in italiano."}]
         risposta_wiki = call_llm(build_system(), msg)
     
-    if risposta_wiki and "INFO_INSUFFICIENTI" not in risposta_wiki and len(risposta_wiki) > 150:
+    if risposta_wiki and len(risposta_wiki) > 150:
         for fonte in fonti_wiki:
             risposta_wiki = risposta_wiki.replace(f"[[{fonte}]]", f"[WIKI] [[{fonte}]]")
         print(f"\n{Colors.CYAN}[WIKI] {Colors.END}", flush=True)
@@ -1438,7 +1318,6 @@ def cmd_query(domanda: str):
     
     print(f"\n{Colors.DIM}⚠️ Ricerca online in corso...{Colors.END}\n", flush=True)
     risultati_web = web_search_brave(domanda, num_results=5)
-    
     if not risultati_web:
         if risposta_wiki:
             print_wrapped(f"[WIKI] {risposta_wiki}")
@@ -1462,7 +1341,6 @@ def cmd_lint():
         print(f"{Colors.RED}🔴 Pagine orfane: {len(orphans)}{Colors.END}", flush=True)
     else:
         print(f"{Colors.GREEN}✅ Nessuna orfana{Colors.END}", flush=True)
-    
     old = []
     for f in SANDBOX.glob("sdbx_*.md"):
         age = (datetime.now() - datetime.fromtimestamp(f.stat().st_mtime)).days
@@ -1484,7 +1362,7 @@ def cmd_backup():
                 for f in d.rglob("*"):
                     if f.is_file():
                         z.write(f, f.relative_to(Path.cwd()))
-        for f in [AGENT_MD, Path("analisi_ingest.py"), Path(".env")]:
+        for f in [AGENT_MD, Path("analisi.py"), Path(".env")]:
             if f.exists():
                 z.write(f)
     print(f"{Colors.GREEN}✅ Backup: {bkp}{Colors.END}", flush=True)
@@ -1493,12 +1371,12 @@ def cmd_stato():
     stato = load_stato()
     print(f"\n{Colors.BLUE}📊 STATO{Colors.END}", flush=True)
     print(f"  Provider: {Colors.CYAN}{PROVIDER_NOME}{Colors.END}", flush=True)
-    print(f"  Modello attivo: {Colors.CYAN}{CURRENT_MODEL}{Colors.END}", flush=True)
+    print(f"  Modello: {Colors.CYAN}{CURRENT_MODEL}{Colors.END}", flush=True)
     print(f"  Fase: {stato.get('fase','nessuna')}", flush=True)
     print(f"  File: {stato.get('file_corrente','nessuno')}", flush=True)
     print(f"  Evidenze: {len(stato.get('evidenziazioni',[]))} trovate, indice {stato.get('indice',0)}", flush=True)
     print(f"  raw/: {len(list(RAW.glob('*')))} | wiki/: {len(list(WIKI.glob('*.md')))}", flush=True)
-    print(f"  sandbox/ (attivi): {len(list(SANDBOX.glob('sdbx_*.md')))}", flush=True)
+    print(f"  sandbox/: {len(list(SANDBOX.glob('sdbx_*.md')))}", flush=True)
     print(flush=True)
 
 def clear_screen():
@@ -1509,67 +1387,56 @@ def print_banner():
     provider_nome = PROVIDER_NOME if PROVIDER_NOME else "Non selezionato"
     print(f"""
 {Colors.BLUE}{Colors.BOLD}╔══════════════════════════════════════════════════════════════╗
-║     SISTEMA SOCRATES-PLATO-BAYES - Versione Definitiva       ║
+║     SISTEMA SOCRATES-PLATO-BAYES - Versione Ibrida          ║
+║         (Risposte Dirette + Approccio Socratico)            ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.END}
 
 {Colors.YELLOW}Provider:{Colors.END} {Colors.CYAN}{provider_nome}{Colors.END}
-{Colors.YELLOW}Modello attivo:{Colors.END} {Colors.CYAN}{modello_nome}{Colors.END}
+{Colors.YELLOW}Modello:{Colors.END} {Colors.CYAN}{modello_nome}{Colors.END}
 {Colors.YELLOW}Soglia chunk:{Colors.END} {Colors.CYAN}{CHUNK_SIZE} parole{Colors.END}
 
 {Colors.BLUE}{'='*60}{Colors.END}
-{Colors.BOLD}📋 COMANDI DISPONIBILI:{Colors.END}
+{Colors.BOLD}📋 COMANDI:{Colors.END}
 {Colors.BLUE}{'='*60}{Colors.END}
 
-{Colors.MAGENTA}✂️  ESTRAZIONE{Colors.END}
-  /estrai                         Estrae evidenze %%...%% e crea estratto_nome.md
+{Colors.GREEN}📥 INGEST{Colors.END}
+  /analizza <file>      Analizza file in raw/ con marcatori >>...<< e ??...??
 
-{Colors.GREEN}📥 ANALISI E INGEST{Colors.END}
-  /analizza <file>                Analizza dimensioni, mostra chunk necessari,
-                                  chiede conferma ed esegue ingest
+{Colors.YELLOW}💬 DISCUSSIONE (IBRIDA){Colors.END}
+  /chat [file]          Avvia/riprendi discussione
+  /salva "risposta"     Salva discussione
+  ℹ️  LLM risponde direttamente a domande fattuali,
+     usa approccio socratico per domande concettuali
 
-{Colors.YELLOW}💬 DISCUSSIONE SOCRATICA{Colors.END}
-  /chat [file]                    Avvia/riprendi discussione
-  /salva "risposta"               Salva evidenza (riassunto narrativo)
-  /fine                           Genera riassunto unificato (IL MIO SAPERE)
-
-{Colors.CYAN}📚 PROMOZIONE E CONSULTAZIONE{Colors.END}
-  /promuovi "Titolo"              Crea pagina wiki
-  /query "domanda"                Interroga wiki + ricerca web
+{Colors.CYAN}📚 WIKI{Colors.END}
+  /promuovi "Titolo"    Crea pagina wiki (include sintesi, evidenze, il mio sapere)
+  /query "domanda"      Interroga wiki + ricerca web
 
 {Colors.BLUE}🔧 UTILITY{Colors.END}
-  /list [cartella]                Mostra file (raw, sandbox, wiki, clippings)
-  /riprendi <file>                Ripristina sandbox archiviato
-  /archivia                       Archivia discussione corrente
-  /lint                           Health-check
-  /backup                         Backup completo
-  /stato                          Mostra stato
-  /clear                          Pulisce schermo
-  /exit                           Esci
+  /list [cartella]      Mostra file
+  /riprendi <file>      Ripristina sandbox archiviato
+  /archivia             Archivia discussione
+  /lint                 Health-check
+  /backup               Backup
+  /stato                Mostra stato
+  /clear                Pulisce schermo
+  /exit                 Esci
 
-{Colors.BLUE}💡 Suggerimenti:{Colors.END}
-  • usa %%...%% per estrarre argomenti (sintesi)
-  • usa ??...?? per evidenziare argomenti da discutere (chat)
-  • usa TAB per autocompletare nomi file
-  • In /chat: usa /salta (salta evidenza), /pausa (salva sessione)
+{Colors.BLUE}💡 Marcatori:{Colors.END}
+  >>...<<  → copia il testo nella sezione EVIDENZE (finisce nel wiki come "Le mie evidenze")
+  ??...??  → genera una domanda socratica
+
+{Colors.BLUE}💡 In /chat:{Colors.END}
+  /salva "risposta"  /salta  /pausa
 """, flush=True)
 
-    raw_files = list(RAW.glob("*.md"))
-    print(f"{Colors.CYAN}📁 File disponibili in raw/:{Colors.END}", flush=True)
-    if raw_files:
-        for f in raw_files[:10]:
-            print(f"   - {f.name}", flush=True)
-        if len(raw_files)>10:
-            print(f"   ... e altri {len(raw_files)-10}", flush=True)
-    else:
-        print(f"   {Colors.DIM}(vuoto){Colors.END}", flush=True)
-
 # ============================================================
-# MENU PRINCIPALE
+# AUTOCOMPLETAMENTO
 # ============================================================
 
 class SpbCompleter:
     def __init__(self):
-        self.commands = ["/estrai", "/list", "/analizza", "/chat", "/salva", "/fine", "/promuovi", "/riprendi", "/archivia", "/query", "/lint", "/backup", "/stato", "/clear", "/exit"]
+        self.commands = ["/analizza", "/chat", "/salva", "/promuovi", "/riprendi", "/archivia", "/query", "/lint", "/backup", "/stato", "/list", "/clear", "/exit"]
         self.list_targets = ["asset", "clippings", "backups", "raw", "sandbox", "wiki", "all"]
 
     def get_matches(self, text, state):
@@ -1605,7 +1472,7 @@ class SpbCompleter:
         if cmd == "/chat" and len(parts) <= 2:
             prefix = parts[1] if len(parts) > 1 else ""
             try:
-                files = [f.name for f in RAW.glob("*.md") if f.is_file()]
+                files = [f.name for f in SANDBOX.glob("sdbx_*.md") if f.is_file()]
                 matches = [f for f in files if f.startswith(prefix)]
                 return matches[state] if state < len(matches) else None
             except:
@@ -1613,12 +1480,17 @@ class SpbCompleter:
         
         return None
 
+# ============================================================
+# MAIN
+# ============================================================
+
 def main():
     clear_screen()
     
     print("=" * 60, flush=True)
-    print("🧠 SISTEMA SOCRATES-PLATO-BAYES (SPB)", flush=True)
+    print("🧠 SISTEMA SOCRATES-PLATO-BAYES (SPB) - VERSIONE IBRIDA", flush=True)
     print("   Supporta: DeepSeek Ufficiale | SiliconFlow", flush=True)
+    print("   Chat: risposte dirette + approccio socratico", flush=True)
     print("=" * 60, flush=True)
     
     provider_key, model_id, api_key = scegli_provider_e_modello_ingest()
@@ -1666,31 +1538,27 @@ def main():
             cmd = parts[0].lower()
             arg = parts[1] if len(parts)>1 else ""
 
-            if cmd == "/estrai":
-                cmd_estrai()
-            elif cmd == "/list":
-                cmd_list(arg if arg else None)
-            elif cmd == "/analizza":
+            if cmd == "/analizza":
                 if arg:
                     cmd_analizza(arg)
                 else:
                     print(f"{Colors.RED}❌ Specifica il file: /analizza documento.md{Colors.END}", flush=True)
+            elif cmd == "/list":
+                cmd_list(arg if arg else None)
             elif cmd == "/chat":
                 cmd_chat(arg if arg else None)
             elif cmd == "/salva":
-                print(f"{Colors.YELLOW}⚠️ Usa /salva durante la chat (dopo /chat){Colors.END}", flush=True)
-            elif cmd == "/fine":
-                cmd_fine()
+                print(f"{Colors.YELLOW}⚠️ Usa /salva durante la chat{Colors.END}", flush=True)
             elif cmd == "/promuovi":
                 if arg:
                     cmd_promuovi(arg)
                 else:
-                    print(f"{Colors.RED}❌ Specifica il titolo: /promuovi \"Titolo della pagina\"{Colors.END}", flush=True)
+                    print(f"{Colors.RED}❌ Specifica il titolo: /promuovi \"Titolo\"{Colors.END}", flush=True)
             elif cmd == "/riprendi":
                 if arg:
                     cmd_riprendi(arg)
                 else:
-                    print(f"{Colors.RED}❌ Specifica il file da riprendere{Colors.END}", flush=True)
+                    print(f"{Colors.RED}❌ Specifica il file: /riprendi sdbx_nome.md{Colors.END}", flush=True)
             elif cmd == "/archivia":
                 cmd_archivia()
             elif cmd == "/query":

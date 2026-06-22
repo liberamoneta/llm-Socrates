@@ -1,6 +1,6 @@
 # Window
 'source venv/Scripts/activate'
-'winpty python analisi_w.py'
+'winpty python analisi.py'
 'git fetch origin'  %% verifica se ci sono aggiornamenti su github
 'git pull'
 
