@@ -1,9 +1,9 @@
 {
   "wiki_post": {
-    "percorso": "vault\\wiki\\wiki_post.md",
-    "dominio": "Generale",
-    "tipo": "analisi",
-    "data": "",
+    "percorso": "vault/wiki/wiki_post.md",
+    "dominio": "Bitcoin",
+    "tipo": "post",
+    "data": "2026-06-22",
     "tags": [
       ""
     ]

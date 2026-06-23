@@ -22,488 +22,470 @@ la sfida, finché l'utente non la cristallizza.
 ---
 
 ## 1. Architettura del progetto
-llm-Socrates/
-├── agent.md # Contratto di comportamento (questo file)
-├── analisi_ingest.py # Implementazione SPB (chat interattiva)
-├── pdf_to_md.py # Converte PDF in Markdown
-├── traduci.py # Traduce file Markdown in italiano
-├── .env # API Key DeepSeek
-├── venv/ # Ambiente virtuale Python
-├── asset/ # Risorse, immagini, allegati
-├── clippings/ # Punto di ingresso: utente deposita qui articoli, appunti, PDF
-└── vault/ # Base di conoscenza
-├── raw/ # Fonti immutabili (Markdown pronti per ingest)
-├── sandbox/ # Area di lavoro SPB
-│ └── archiviati/ # Discussioni completate o abbandonate
-└── wiki/ # Note promosse dal processo SPB
-├── index.md # Indice di tutte le pagine wiki
-└── log.md # Registro cronologico delle operazioni
 
-text
+```
+llm-Socrates/
+├── agent.md                  # Contratto di comportamento (questo file)
+├── analisi_wiki.py           # Implementazione SPB (chat interattiva)
+├── pdf_to_md.py              # Converte PDF in Markdown
+├── traduci.py                # Traduce file Markdown in italiano
+├── .env                      # API Key DeepSeek / SiliconFlow
+├── venv/                     # Ambiente virtuale Python
+├── asset/                    # Risorse, immagini, allegati
+├── clippings/                # Punto di ingresso: utente deposita qui articoli, appunti, PDF
+└── vault/                    # Base di conoscenza
+    ├── raw/                  # Fonti immutabili (Markdown pronti per ingest)
+    ├── sandbox/              # Area di lavoro SPB
+    │   ├── .stato_spb.json   # Stato della sessione corrente
+    │   ├── .checkpoint.json  # Checkpoint per /pausa e ripresa
+    │   └── archiviati/       # Discussioni completate o abbandonate
+    └── wiki/                 # Note promosse dal processo SPB
+        ├── index.md          # Indice tabellare di tutte le pagine wiki
+        ├── log.md            # Registro cronologico delle operazioni
+        └── .indice_wiki.json # Indice JSON leggero per /query
+```
 
 **Regola fondamentale:** la cartella `wiki/` è di proprietà dell'utente.
 L'LLM propone testo per `wiki/` ma non lo scrive mai autonomamente.
 La cartella `sandbox/` è dove avviene il processo SPB.
 
-**Nota:** I file sandbox hanno prefisso `sdbx_` (es. `sdbx_articolo_V1.md`) per distinguerli chiaramente.
+**Nota:** I file sandbox hanno prefisso `sdbx_` (es. `sdbx_articolo_V1.md`).
 
 ---
 
-## 2. Flusso completo dei tre script
+## 2. Flusso completo
+
+```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ FLUSSO COMPLETO SOCRATES-PLATO-BAYES │
+│                        FLUSSO COMPLETO SPB                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ │
-│ 📄 PDF │
-│ ↓ │
-│ python pdf_to_md.py → clippings/documento.md + asset/immagini │
-│ ↓ │
-│ python traduci.py (opzionale) → raw/documento_it.md │
-│ ↓ │
-│ python analisi_ingest.py │
-│ ↓ │
-│ ✂️ /estrai (da file con >>---<<) → raw/estratto_documento.md │
-│ ↓ │
-│ 📥 /analizza documento.md → sandbox/sdbx_documento_V1.md │
-│ ↓ │
-│ 💬 /chat → discussione socratica │
-│ ↓ │
-│ 💾 /salva "risposta" → salva evidenziazione nel sandbox │
-│ ↓ │
-│ 🏁 /fine → genera "IL MIO SAPERE" │
-│ ↓ │
-│ 📚 /promuovi "Titolo" → wiki/Titolo.md + sandbox archiviato │
-│ │
+│                                                                             │
+│  📄 PDF / articolo                                                          │
+│       ↓                                                                     │
+│  python pdf_to_md.py        → clippings/documento.md + asset/immagini       │
+│       ↓                                                                     │
+│  python traduci.py (opz.)   → raw/documento_it.md                           │
+│       ↓                                                                     │
+│  [MANUALE] Aggiungi marcatori >>...<< e ??...?? nel file raw/               │
+│       ↓                                                                     │
+│  📥 /analizza documento.md  → sandbox/sdbx_documento_V1.md                  │
+│       ↓                                                                     │
+│  💬 /chat                   → discussione socratica ibrida                  │
+│       ↓                                                                     │
+│  💾 /salva "risposta"       → salva discussione + riassunto nel sandbox     │
+│       ↓                                                                     │
+│  🏁 /fine                   → genera "IL MIO SAPERE" (riassunto unificato)  │
+│       ↓                                                                     │
+│  📚 /promuovi "Titolo"      → wiki/Titolo.md + sandbox archiviato           │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
-
-text
+```
 
 ---
 
-## 3. Il ciclo Socrates–Plato–Bayes
+## 3. Marcatori nei file raw/
 
-Il ciclo si svolge all'interno di un singolo file in `sandbox/sdbx_[nome]_V1.md`.
+Prima di lanciare `/analizza`, l'utente **manualmente** inserisce due tipi
+di marcatori nel file Markdown dentro `raw/`:
 
-### Fase 0 — PREPARAZIONE: estrazione (opzionale)
+| Marcatore | Effetto |
+|-----------|---------|
+| `>>testo<<` | **COPIA** il testo nella sezione `## 📌 EVIDENZE DA DISCUTERE` del sandbox. Il testo marcato viene **rimosso dalla sintesi** (non la influenza). Serve a dare contesto alla chat. |
+| `??testo??` | **GENERA** una domanda socratica nella sezione `## ❓ DOMANDE DA DISCUTERE`. Anche questo testo è **escluso dalla sintesi**. |
 
-L'utente può estrarre parti specifiche da un file prima dell'ingest:
+Esempio di file raw con marcatori:
 
-1. Aggiunge marcatori `>>---<<` attorno al testo da estrarre nel file in `raw/`
-2. `/estrai` — estrae le evidenze e crea `raw/estratto_nome.md`
-3. Prosegue con `/analizza` sul file estratto
+```markdown
+L'economia circolare è un modello di produzione e consumo che implica
+condivisione, prestito, riutilizzo, riparazione e riciclo dei materiali
+e prodotti esistenti il più a lungo possibile.
 
-**Formato marcatori:**
-- Multi riga: `>>---<<` su riga vuota, poi testo, poi `>>---<<` su riga vuota
-- Singola riga: `>>---<< testo da estrarre >>---<<`
+>>L'UE genera 2.2 miliardi di tonnellate di rifiuti ogni anno.<<
 
-### Fase 1 — INGEST: preparazione
+Questo modello sfida il tradizionale paradigma lineare "prendi-produci-getta".
 
-L'utente ha un file Markdown in `raw/` (proveniente da `pdf_to_md.py` o `traduci.py` o manuale):
+??Quali settori industriali sono più resistenti alla transizione circolare??
+```
 
-1. `/analizza <file>` — analizza dimensioni, mostra chunk necessari, chiede conferma
-2. LLM genera riassunto ESAUSTIVO (paragrafi continui) in `sandbox/sdbx_[nome]_V1.md`
-3. L'utente **legge il riassunto** e **evidenzia** gli argomenti che vuole discutere usando il formato `>argomento<` direttamente nel file
-4. `/chat` — avvia la discussione
+---
 
-**Comportamento di `/analizza`:**
-- Se file ≤ 1500 parole → "File ottimale. Non è necessario suddividere in chunk."
-- Se file > 1500 parole → "Sarà suddiviso in N chunk da 1500 parole."
-- Chiede conferma "Procedere con l'ingest? (s/n)"
-- Se sì, esegue ingest (diretto o a chunk)
+## 4. Il ciclo Socrates–Plato–Bayes
 
-**Struttura del file dopo `/analizza` (sandbox):**
+### Fase 1 — INGEST: `/analizza <file>`
+
+**Input:** un file Markdown in `raw/` (da `pdf_to_md.py`, `traduci.py` o creato manualmente).
+
+**Processo:**
+1. Estrae i marcatori `>>...<<` (blocchi evidenza) e `??...??` (domande socratiche)
+2. Rimuove tutti i marcatori dal testo originale
+3. Invia il testo pulito all'LLM per generare una **sintesi esaustiva** in paragrafi continui
+4. Crea il file sandbox con tre sezioni: SINTESI, EVIDENZE, DOMANDE
+
+**Nota:** il file viene elaborato **intero**, senza suddivisione in chunk
+(il valore `CHUNK_SIZE = 1500` è definito ma attualmente inutilizzato).
+
+**File creato:** `sandbox/sdbx_[nome]_V1.md`
+
+**Struttura del sandbox dopo `/analizza`:**
 
 ```markdown
 ---
 stato: BOZZA
 lingua: italiano
-fonte: [nome_file]
+fonte: documento.md
 data_ingest: YYYY-MM-DD
 ---
 
 # 📌 SINTESI ESAUSTIVA
 
 [Riassunto in paragrafi continui, termini tecnici originali,
-seguendo l'ordine del documento. Niente elenchi puntati inutili.]
+seguendo l'ordine del documento. Niente elenchi puntati.]
 
 ---
+
+## 📌 EVIDENZE DA DISCUTERE
+
+### Evidenza 1
+
+>>L'UE genera 2.2 miliardi di tonnellate di rifiuti ogni anno.<<
+
+### Evidenza 2
+
+>>...<<
+
+---
+
+## ❓ DOMANDE DA DISCUTERE
+
+### Domanda 1
+
+??Quali settori industriali sono più resistenti alla transizione circolare??
+
+### Domanda 2
+
+??...??
+```
+
+### Fase 2 — SOCRATE: `/chat [file]`
+
+**Processo:**
+1. Legge il file sandbox
+2. Estrae tutte le domande `??...??` dalla sezione `## ❓ DOMANDE DA DISCUTERE`
+3. Estrae tutte le evidenze `>>...<<` dalla sezione `## 📌 EVIDENZE DA DISCUTERE`
+4. Per **ogni domanda** (in sequenza), avvia un dialogo con **approccio ibrido**
+
+**Approccio ibrido:**
+- **Domande fattuali** ("quando?", "quanti?", "come funziona?", "cos'è?") → LLM risponde **direttamente** con dati e precisione
+- **Domande concettuali** ("perché?", "ha senso?", "è giusto?") → LLM usa **approccio socratico** (domande guidate, mai la risposta diretta)
+- L'LLM può mescolare: rispondere ai fatti e poi fare una domanda socratica di approfondimento
+- L'LLM può cercare online (Brave API o DuckDuckGo) se utile
+
+**Comandi disponibili durante `/chat`:**
+
+| Comando | Effetto |
+|---------|---------|
+| `/salva "risposta"` | Salva la discussione corrente (conversazione + riassunto + risposta finale) e passa alla prossima domanda |
+| `/salta` | Salta la domanda corrente senza salvarla; passa alla successiva |
+| `/pausa` | Salva un checkpoint e torna al prompt principale (riprendibile con `/chat`) |
+| `/archivia` | Archivia l'intera discussione in `archiviati/` ed esce dalla chat |
+| `/list` | Mostra i file delle cartelle |
+| `/stato` | Mostra lo stato corrente |
+| `/lint` | Health-check del wiki |
+| `/backup` | Backup del vault |
+
+**Su `/salva`, il sistema scrive immediatamente nel sandbox:**
+
+```markdown
+## 🗨️ DISCUSSIONE SOCRATICA
+
+### Discussione 1: ??Quali settori sono più resistenti???
+
+**Conversazione:**
+Utente: Secondo me il settore automotive...
+LLM: Interessante. Ma consideriamo che...
+...
+
+**Riassunto della conversazione:**
+[Riassunto narrativo tecnico generato dall'LLM, testo fluido senza elenchi]
+
+**Risposta finale:** Il settore energetico fossile è il più resistente
+perché l'infrastruttura estrattiva non è riconvertibile.
+
+---
+
+### Discussione 2: ??...??
+...
+```
+
+**Struttura del sandbox dopo `/chat` e `/salva` (tutte le domande):**
+
+```markdown
+---
+stato: BOZZA
+...
+
+# 📌 SINTESI ESAUSTIVA
+...
+
+## 📌 EVIDENZE DA DISCUTERE
+...
+
+## ❓ DOMANDE DA DISCUTERE
+...
 
 ## 🗨️ DISCUSSIONE SOCRATICA
 
-(Lascia vuoto)
+### Discussione 1: ...
+### Discussione 2: ...
+```
 
+### Fase 3 — BAYES: `/fine`
+
+Genera il **riassunto narrativo unificato** di tutte le discussioni salvate.
+
+**Processo:**
+1. Estrae ogni blocco `### Discussione N:` dal sandbox
+2. Per ciascuno recupera: domanda, riassunto della conversazione, risposta finale
+3. Invia tutto all'LLM per generare un riassunto in prima persona
+4. Scrive il risultato nella sezione `## ✅ IL MIO SAPERE` del sandbox
+
+**Se la sezione `IL MIO SAPERE` esiste già** (non vuota): non viene rigenerata.
+
+### Fase 4 — PROMOZIONE: `/promuovi "Titolo"`
+
+Promuove il sandbox a pagina wiki permanente.
+
+**Processo interattivo:**
+1. Chiede **dominio** (Bitcoin, Cultura, Economia, Generale, Geopolitica, Storia, Tecnologia, o inserimento manuale)
+2. Chiede **tipo** (appunti, articolo, paper, podcast, post, o inserimento manuale)
+3. Pulisce il contenuto sandbox:
+   - Rimuove il vecchio frontmatter YAML
+   - Rimuove `## 📌 EVIDENZE DA DISCUTERE`
+   - Rimuove `## ❓ DOMANDE DA DISCUTERE`
+   - Rimuove `## 🗨️ DISCUSSIONE SOCRATICA` (il wiki conserva il risultato, non il percorso)
+   - Rimuove i riassunti delle conversazioni e i placeholder
+   - Conserva: `# 📌 SINTESI ESAUSTIVA` + `## ✅ IL MIO SAPERE`
+4. Crea un nuovo frontmatter YAML con titolo, dominio, tipo, data, cicli_spb, fonti
+5. Scrive la pagina wiki
+6. Sposta il sandbox in `sandbox/archiviati/`
+7. Aggiorna `wiki/index.md` e `wiki/log.md`
+
+**Versionamento:** se una pagina con lo stesso slug esiste già:
+- Se esistono versioni `_v2`, `_v3`... → crea `_v{N+1}`
+- Altrimenti → crea `_YYYYMMDD` con data
+
+**Struttura della pagina wiki risultante:**
+
+```markdown
 ---
-
-## ✅ IL MIO SAPERE
-
-(Lascia vuoto)
-Fase 2 — SOCRATE (implicita)
-L'utente ha già evidenziato gli argomenti nel file. L'LLM legge queste evidenziazioni come "ciò che l'utente vuole discutere e approfondire".
-
-Fase 3 — PLATONE: l'LLM sfida e dialoga (con scrittura immediata)
-L'utente lancia /chat. L'LLM:
-
-Legge il file sandbox sdbx_[nome]_V1.md
-
-Estrae gli argomenti evidenziati con >argomento<
-
-Per OGNI evidenziazione, genera UNA domanda socratica
-
-Avvia un dialogo libero con l'utente sulla domanda (l'LLM può cercare informazioni online se utile)
-
-L'utente risponde, discute, approfondisce liberamente
-
-Quando l'utente è soddisfatto, usa /salva "risposta definitiva"
-
-L'LLM immediatamente:
-
-genera un riassunto narrativo tecnico della conversazione (testo fluido, senza punti elenco, linguaggio preciso)
-
-scrive nel file sandbox (nella sezione ## 🗨️ DISCUSSIONE SOCRATICA) un blocco completo che contiene: domanda, conversazione integrale, riassunto narrativo, risposta finale
-
-passa all'evidenziazione successiva
-
-Importante: la scrittura avviene subito, non alla fine. Il file sandbox viene aggiornato dopo ogni /salva.
-
-Fase 4 — BAYES: riassunto finale
-Dopo aver discusso tutte le evidenziazioni, l'utente lancia /fine.
-
-LLM genera un riassunto narrativo unificato (sezione ## ✅ IL MIO SAPERE) che:
-
-Legge tutti i riassunti delle singole evidenziazioni
-
-Li unisce in un unico racconto fluido (nessun punto elenco)
-
-Cerca un filo logico che collega le varie evidenziazioni
-
-Usa linguaggio tecnico preciso
-
-È scritto in prima persona ("Ho compreso che...", "È emerso che...")
-
-Fase 5 — PROMOZIONE (con nuova struttura wiki)
-Per trasformare la discussione in una pagina wiki permanente, l'utente usa:
-
-text
-/promuovi "Titolo della pagina"
-Comportamento di /promuovi:
-
-Situazione	Azione
-Pagina non esiste	Crea wiki/Titolo.md con la nuova struttura
-Pagina esiste già	Crea wiki/Titolo v2.md (o Titolo (data).md) con wikilink automatico [[Titolo originale]]
-Nuova struttura della pagina wiki:
-
-markdown
----
-titolo: [Titolo]
-dominio: [Bitcoin | Cultura | Economia | Generale | Geopolitica | Storia | Tecnologia]
-tipo: [appunti | articolo | paper | podcast | post]
+titolo: Titolo della pagina
+dominio: Tecnologia
+tipo: articolo
 stato: attivo
 data_promozione: YYYY-MM-DD
-cicli_spb: [numero di evidenziazioni discusse]
-fonti: [[file1_in_raw]], [[file2_in_raw]]
----
-
-## TL;DR
-
-[Una frase. La tesi centrale dell'articolo.]
-
-## Mappa concettuale
-
-- **Problema:** ...
-- **Argomento:** ...
-- **Conclusione:** ...
-- **Implicazione per te:** ...
-
-## Punti chiave
-
-1. ...
-2. ...
-3. ...
-(massimo 7, ciascuno una frase)
-
-## Sviluppo analitico
-
-[Contenuto della SINTESI ESAUSTIVA del sandbox - copiato identico]
-
-## Citazioni rilevanti
-
-> "..."
-
-## Entità collegate
-
-[[X]], [[Y]], [[Z]]
-
-## Concetti generati
-
-[[A]], [[B]]
-
----
-
-## ✅ IL MIO SAPERE
-
-[Contenuto della sezione IL MIO SAPERE del sandbox - copiato identico]
-Note importanti:
-
-La sezione ## 🗨️ DISCUSSIONE SOCRATICA NON viene copiata nel wiki
-
-Sviluppo analitico è una copia identica della SINTESI ESAUSTIVA
-
-IL MIO SAPERE è copiato identico dal sandbox
-
-Le altre sezioni (TL;DR, Mappa concettuale, Punti chiave, Citazioni rilevanti, Entità collegate, Concetti generati) sono generate dall'LLM analizzando la SINTESI ESAUSTIVA
-
-Dopo la promozione, il file sandbox viene spostato in sandbox/archiviati/.
-
-Fase 6 — RIPRISTINO (opzionale)
-Se si vuole riprendere una discussione archiviata:
-
-text
-/riprendi sdbx_nome_V1.md
-L'LLM:
-
-Cerca il file in sandbox/archiviati/
-
-Lo copia (non sposta) in sandbox/
-
-Resetta lo stato
-
-Messaggio: "✅ Discussione ripristinata da archivio. Usa /chat per continuare."
-
-4. Operazioni disponibili
-Comando	Descrizione
-/estrai	Estrae evidenze >>---<< da un file in raw/ e crea estratto_nome.md
-/list [cartella]	Mostra i file nelle cartelle (raw, sandbox, wiki, clippings, asset, backups)
-/analizza <file>	Analizza dimensioni, mostra chunk necessari, chiede conferma ed esegue ingest
-/chat [file]	Avvia/riprende discussione socratica sulle evidenziazioni >...<
-/salva "risposta"	Durante la chat: salva la discussione con riassunto narrativo tecnico
-/fine	Genera il riassunto unificato (## ✅ IL MIO SAPERE)
-/promuovi "<titolo>"	Promuove la discussione a pagina wiki (nuova struttura) e archivia il sandbox
-/riprendi <file>	Ripristina un sandbox archiviato per continuare la discussione
-/archivia	Archivia la discussione corrente in sandbox/archiviati/
-/query "<domanda>"	Interroga il wiki; risposta con link + descrizione [[pagina]] — testo
-/lint	Health-check del wiki (solo output a schermo)
-/backup	Crea un backup compresso di tutto il vault
-/stato	Mostra lo stato del ciclo SPB corrente e statistiche vault
-/clear	Pulisce lo schermo
-/exit	Esce dalla chat interattiva
-5. Formato del file sandbox (sandbox/sdbx_[nome]_V1.md)
-markdown
----
-stato: BOZZA | COMPLETATA
-lingua: italiano
-fonte: [nome_file]
-data_ingest: YYYY-MM-DD
+cicli_spb: 3
+fonti: [[documento.md]]
 ---
 
 # 📌 SINTESI ESAUSTIVA
 
-[Riassunto in paragrafi continui, con termini tecnici originali,
-seguendo l'ordine del documento. L'utente aggiunge qui le evidenziazioni >...<]
-
----
-
-## 🗨️ DISCUSSIONE SOCRATICA
-
-### Evidenziazione 1: >argomento<
-
-**Domanda:** [Domanda socratica generata da LLM]
-
-**Conversazione:**
-Utente: ...
-LLM: ...
-...
-
-text
-
-**Riassunto della conversazione:**
-[Riassunto narrativo tecnico, testo fluido senza punti elenco]
-
-**Risposta finale:** [Risposta definitiva dell'utente]
-
----
-
-### Evidenziazione 2: >altro_argomento<
-
-...
-
----
+[Contenuto copiato dal sandbox]
 
 ## ✅ IL MIO SAPERE
 
-[Riassunto narrativo unificato, in prima persona, con filo logico tra le evidenziazioni]
-Note:
-
-L'utente inserisce solo evidenziazioni >argomento< nel testo della SINTESI ESAUSTIVA
-
-La discussione socratica si concentra esclusivamente sugli argomenti evidenziati
-
-L'LLM scrive nel file solo durante /salva (un blocco per evidenziazione) e durante /fine (riassunto unificato)
-
-L'LLM non scrive mai durante il dialogo libero
-
-6. Struttura della pagina wiki (vault/wiki/[slug].md)
-markdown
----
-titolo: [Titolo della pagina]
-dominio: [Bitcoin | Cultura | Economia | Generale | Geopolitica | Storia | Tecnologia]
-tipo: [appunti | articolo | paper | podcast | post]
-stato: attivo
-data_promozione: YYYY-MM-DD
-cicli_spb: [numero di evidenziazioni discusse]
-fonti: [[file1_in_raw]], [[file2_in_raw]]
----
-
-## TL;DR
-
-[Una frase. La tesi centrale dell'articolo.]
-
-## Mappa concettuale
-
-- **Problema:** ...
-- **Argomento:** ...
-- **Conclusione:** ...
-- **Implicazione per te:** ...
-
-## Punti chiave
-
-1. ...
-2. ...
-3. ...
-(massimo 7, ciascuno una frase)
-
-## Sviluppo analitico
-
-[Contenuto della SINTESI ESAUSTIVA del sandbox - copiato identico]
-
-## Citazioni rilevanti
-
-> "..."
-
-## Entità collegate
-
-[[X]], [[Y]], [[Z]]
-
-## Concetti generati
-
-[[A]], [[B]]
+[Contenuto copiato dal sandbox]
+```
 
 ---
 
-## ✅ IL MIO SAPERE
+## 5. Riepilogo comandi
 
-[Contenuto della sezione IL MIO SAPERE del sandbox - copiato identico]
-Note:
+| Comando | Dove | Descrizione |
+|---------|------|-------------|
+| `/analizza <file>` | Prompt principale | Analizza file in `raw/`, estrae marcatori, genera sintesi nel sandbox |
+| `/chat [file]` | Prompt principale | Avvia/riprende discussione socratica ibrida sulle domande `??...??` |
+| `/salva "risposta"` | Durante `/chat` | Salva discussione, riassunto e risposta; passa alla prossima domanda |
+| `/salta` | Durante `/chat` | Salta la domanda corrente e passa alla successiva |
+| `/pausa` | Durante `/chat` | Salva checkpoint e torna al prompt principale |
+| `/fine` | Prompt principale | Genera riassunto unificato in `## ✅ IL MIO SAPERE` |
+| `/promuovi "Titolo"` | Prompt principale | Promuove sandbox a pagina wiki e archivia il sandbox |
+| `/riprendi <file>` | Prompt principale | Ripristina un sandbox da `archiviati/` per continuare |
+| `/archivia` | Entrambi | Archivia il sandbox corrente in `archiviati/` |
+| `/query "domanda"` | Prompt principale | Interroga wiki locale + fallback ricerca web |
+| `/list [cartella]` | Entrambi | Mostra file in asset, clippings, backups, raw, sandbox, wiki |
+| `/lint` | Entrambi | Health-check: pagine orfane, sandbox attivi da >30gg |
+| `/backup` | Entrambi | Crea backup zip di vault, clippings, asset, agent.md, analisi.py, .env |
+| `/stato` | Entrambi | Mostra provider, modello, fase corrente, statistiche vault |
+| `/clear` | Prompt principale | Pulisce lo schermo |
+| `/exit` | Prompt principale | Esce dal programma |
 
-La sezione ## 🗨️ DISCUSSIONE SOCRATICA NON viene copiata nel wiki
+---
 
-Il wiki conserva solo il risultato (SINTESI + IL MIO SAPERE), non il percorso dialogico
+## 6. Comandi di dettaglio
 
-Sviluppo analitico è una copia identica della SINTESI ESAUSTIVA
+### `/query "domanda"`
 
-Le altre sezioni sono generate dall'LLM analizzando la SINTESI ESAUSTIVA
+1. **Primo passo:** cerca nel wiki locale usando `.indice_wiki.json`
+   - Matching per: dominio nel testo della domanda, tag, titolo
+   - Restituisce fino a 3 pagine più rilevanti
+2. **Se trova pagine:** estrae da ciascuna le sezioni `## Sviluppo analitico`,
+   `## ✅ Il mio sapere`, `## Le mie evidenze` e chiede all'LLM di rispondere
+   basandosi su quei contenuti
+3. **Se la risposta wiki è sufficiente** (>150 caratteri): mostra risultato marcato `[WIKI]`
+4. **Altrimenti:** fallback a ricerca web (Brave API → DuckDuckGo)
+   - I risultati web vengono mostrati direttamente
 
-7. Formato delle risposte QUERY
-L'LLM risponde alle query con link + descrizione:
+### `/stato`
 
-text
-Secondo [[trappola di Tucidide]] — il conflitto tra potenza egemone ed emergente è quasi inevitabile. Bitcoin propone una soluzione in [[Bitcoin come neutrale]] — moneta senza emittente sovrano.
-Questo formato permette di capire il contenuto senza dover cliccare sul link.
+Mostra:
+- Provider e modello in uso
+- Fase corrente (es. `INGEST_COMPLETATO`, `IN_DISCUSSIONE`)
+- File attivo
+- Numero di evidenze/domande trovate e indice corrente
+- Statistiche: conteggio file in `raw/`, `wiki/`, `sandbox/`
 
-Se le informazioni nel wiki sono insufficienti, /query cerca online (Brave API) e marca le fonti con [WIKI] e [WEB].
+### `/lint`
 
-8. Flussi completi
-Nuova pagina da PDF
-text
-clippings/documento.pdf
-     ↓
-python pdf_to_md.py          → clippings/documento.md + asset/immagini
-     ↓
-python traduci.py (opzionale) → raw/documento_it.md
-     ↓
-python analisi_ingest.py
-     ↓
-(se si vuole estrarre solo parti) /estrai → raw/estratto_documento.md
-     ↓
-/analizza documento.md
-     ↓
-utente aggiunge >argomento< nel file sandbox (nella SINTESI ESAUSTIVA)
-     ↓
-/chat → LLM fa domande, utente dialoga (LLM può cercare online)
-     ↓
-/salva "risposta" (per ogni evidenziazione, con riassunto narrativo tecnico)
-     ↓
-/fine (genera riassunto unificato)
-     ↓
-/promuovi "Titolo" → menu conferma → pagina wiki creata e sandbox archiviato
-Ripresa di una discussione archiviata
-text
-/riprendi sdbx_nome_V1.md
-     ↓
-/chat → continua la discussione
-Aggiornamento di una pagina esistente
-Poiché non esiste /discuti, l'utente può:
+Controlla (solo output a schermo, nessun file modificato):
+- **Pagine orfane:** pagine wiki senza wikilink entranti da altre pagine
+- **Sandbox vecchi:** file `sdbx_*.md` non archiviati da più di 30 giorni
 
-Creare una nuova pagina con /promuovi (il sistema crea automaticamente una nuova versione con wikilink all'originale)
+### `/backup`
 
-Unire manualmente i contenuti (copia/incolla) nella pagina wiki originale
+Crea uno zip in `backups/vault_backup_YYYYMMDD_HHMMSS.zip` contenente:
+- Cartelle: `clippings/`, `vault/`, `asset/`
+- File: `agent.md`, `analisi_wiki.py`, `.env`
 
-Mantenere entrambe le pagine e collegarle con wikilink
+### `/list [cartella]`
 
-Solo idea testuale (senza fonte)
-Per discutere un'idea senza fonte, l'utente può creare un file Markdown manuale in raw/ con la struttura desiderata, aggiungere evidenziazioni >...<, e procedere con /analizza e /chat.
+Se viene specificata una cartella (`raw`, `sandbox`, `wiki`, `clippings`, `asset`, `backups`):
+mostra fino a 20 file contenuti.
 
-9. Gestione delle allucinazioni
-L'LLM deve segnalare esplicitamente quando un fatto citato non è ricavabile da raw/ o dalla propria conoscenza verificabile:
+Se nessuna cartella o `all`: mostra tutte le cartelle con fino a 10 file ciascuna.
 
-⚠️ Questa affermazione è basata sulla mia conoscenza di training, non su fonti in raw/. Verificare prima di considerarla solida.
+### `/riprendi <file>`
 
-Se l'utente vuole portare quel fatto nel wiki, deve trovare la fonte e aggiungerla a raw/ prima della promozione.
+1. Cerca il file in `sandbox/archiviati/`
+2. Accetta nomi con o senza prefisso `sdbx_` e con o senza `.md`
+3. **Copia** (non sposta) il file in `sandbox/`
+4. Imposta lo stato come `INGEST_COMPLETATO`
 
-10. Lint — criteri di salute del wiki
-Il comando /lint produce output SOLO a schermo (nessun file salvato).
+---
 
-Controlla:
+## 7. Autocompletamento (Tab)
 
-Pagine senza inbound links (orfane)
+Se `readline` è disponibile, il sistema offre completamento tramite Tab:
 
-Tesi promosse senza cicli SPB documentati (campo cicli_spb: 0)
+| Contesto | Completamento |
+|----------|--------------|
+| Inizio riga | Tutti i comandi (`/analizza`, `/chat`, `/list`, ...) |
+| `/list ` | Cartelle (`asset`, `clippings`, `backups`, `raw`, `sandbox`, `wiki`, `all`) |
+| `/analizza ` | File `.md` in `raw/` |
+| `/chat ` | File `sdbx_*.md` in `sandbox/` |
 
-Sandbox attivi da più di 30 giorni
+---
 
-Output con priorità:
+## 8. Provider e modelli
 
-🔴 CRITICO — problemi che compromettono l'integrità del wiki
+Selezionabili all'avvio tramite menu interattivo.
 
-🟡 ATTENZIONE — problemi che meritano revisione
+### DeepSeek Ufficiale
+Base URL: `https://api.deepseek.com`
 
-🔵 SUGGERIMENTO — miglioramenti opzionali
+| Modello | Descrizione |
+|---------|-------------|
+| `deepseek-chat` | Standard |
+| `deepseek-reasoner` | Ragionamento |
+| `deepseek-v4-pro` | Modello di punta |
 
-11. Principi non negoziabili
-Principio	Descrizione
-Il wiki è dell'utente	Ogni argomento nel wiki è stato scelto e discusso dall'utente. L'LLM è l'interlocutore, non l'autore.
-Nessuna promozione senza discussione	Un argomento non discusso non entra nel wiki. Neanche se sembra ovvio.
-Le fonti sono immutabili	raw/ non viene mai modificato dall'LLM.
-Sessioni effimere, wiki permanente	Ogni sessione deve poter ricominciare leggendo solo questo file e wiki/index.md.
-La sfida è un atto di rispetto	L'LLM sfida perché vuole che l'argomento sia compreso a fondo, non per dimostrare che l'utente ha torto.
-Lingua italiana	Tutti i riassunti, le sfide, le risposte e le pagine wiki sono generate in italiano.
-Evidenziazione come selezione	L'utente seleziona gli argomenti da discutere usando il formato >argomento<.
-Scrittura immediata su /salva	Il file sandbox viene aggiornato subito dopo ogni evidenziazione.
-Riassunto narrativo tecnico	I riassunti sono testi fluidi, senza punti elenco, con linguaggio preciso.
-Archiviazione dopo promozione	I sandbox promossi vengono spostati in sandbox/archiviati/.
-Versionamento delle pagine wiki	Se una pagina esiste già, /promuovi crea una nuova versione (es. Titolo v2) con wikilink all'originale.
-12. Differenza con la llm-wiki standard di Karpathy
-Aspetto	llm-wiki (Karpathy)	llm-wiki + SPB
-Chi scrive il wiki	L'LLM	L'utente (con supporto LLM)
-Punto di partenza	La fonte	Gli argomenti evidenziati dall'utente
-Rischio allucinazione	Propagazione diretta	Filtrata dalla discussione
-Valore del wiki	Sintesi dell'AI	Argomenti discussi e compresi
-Velocità di crescita	Alta	Bassa ma densa
-Internalizzazione	Non garantita	Strutturalmente necessaria
-Lingua	Indifferente	Italiano
-Ruolo dell'utente	Lettore passivo	Selettore attivo di argomenti
+### SiliconFlow
+Base URL: `https://api.siliconflow.com/v1`
+
+| Modello | Descrizione |
+|---------|-------------|
+| `deepseek-ai/DeepSeek-V3` | Chat generale, ragionamento, codice |
+| `deepseek-ai/DeepSeek-R1` | Ragionamento avanzato, matematica, logica |
+| `deepseek-ai/DeepSeek-V2` | Bilanciato, veloce, economico |
+| `Qwen/Qwen2.5-72B-Instruct` | Traduzioni, scrittura, analisi testi |
+| `Qwen/Qwen2.5-32B-Instruct` | Traduzioni, scrittura (più economico) |
+| `zai-org/GLM-5.2` | Coding |
+
+### Configurazione `.env`
+
+```env
+DEEPSEEK_API_KEY=sk-...
+SILICONFLOW_API_KEY=sk-...
+BRAVE_API_KEY=...              # opzionale, per ricerca web
+```
+
+Il sistema cerca `.env` in: `./.env`, `./llm-Socrates/.env`, `../.env`.
+
+---
+
+## 9. Stato e persistenza
+
+### File di stato
+- `.stato_spb.json` — fase, file corrente, domande, storico chat
+- `.checkpoint.json` — creato da `/pausa`; scade dopo 24 ore
+- `.indice_wiki.json` — indice leggero per `/query`; rigenerabile con `costruisci_indice()`
+
+### Fasi possibili nello stato
+```
+NESSUNO  →  INGEST_COMPLETATO  →  IN_DISCUSSIONE  →  COMPLETATA
+```
+
+---
+
+## 10. Gestione delle allucinazioni
+
+L'LLM deve segnalare esplicitamente quando un fatto citato non è ricavabile
+da `raw/` o dalla propria conoscenza verificabile:
+
+> ⚠️ Questa affermazione è basata sulla mia conoscenza di training, non su
+> fonti in raw/. Verificare prima di considerarla solida.
+
+Se l'utente vuole portare quel fatto nel wiki, deve trovare la fonte e
+aggiungerla a `raw/` prima della promozione.
+
+---
+
+## 11. Principi non negoziabili
+
+| Principio | Descrizione |
+|-----------|-------------|
+| **Il wiki è dell'utente** | Ogni argomento nel wiki è stato scelto e discusso dall'utente. L'LLM è l'interlocutore, non l'autore. |
+| **Nessuna promozione senza discussione** | Un argomento non discusso non entra nel wiki. Neanche se sembra ovvio. |
+| **Le fonti sono immutabili** | `raw/` non viene mai modificato dall'LLM. |
+| **Sessioni effimere, wiki permanente** | Ogni sessione deve poter ricominciare leggendo solo questo file e `wiki/index.md`. |
+| **La sfida è un atto di rispetto** | L'LLM sfida perché vuole che l'argomento sia compreso a fondo, non per dimostrare che l'utente ha torto. |
+| **Lingua italiana** | Tutti i riassunti, le sfide, le risposte e le pagine wiki sono generate in italiano. |
+| **Marcatori nel raw** | L'utente prepara il file con `>>...<<` (evidenze) e `??...??` (domande) prima dell'ingest. |
+| **Chat ibrida** | L'LLM risponde direttamente a domande fattuali e usa approccio socratico per domande concettuali. |
+| **Scrittura immediata su `/salva`** | Il sandbox viene aggiornato subito dopo ogni discussione, non alla fine. |
+| **Riassunto narrativo tecnico** | I riassunti sono testi fluidi, senza punti elenco, con linguaggio preciso. |
+| **Archiviazione dopo promozione** | I sandbox promossi vengono spostati in `sandbox/archiviati/`. |
+| **Versionamento pagine wiki** | Se una pagina esiste già, `/promuovi` crea una nuova versione con wikilink all'originale. |
+
+---
+
+## 12. Differenza con la llm-wiki standard di Karpathy
+
+| Aspetto | llm-wiki (Karpathy) | llm-wiki + SPB |
+|---------|---------------------|----------------|
+| Chi scrive il wiki | L'LLM | L'utente (con supporto LLM) |
+| Punto di partenza | La fonte | Marcatori `>>...<<` e `??...??` nel raw |
+| Rischio allucinazione | Propagazione diretta | Filtrata dalla discussione socratica |
+| Valore del wiki | Sintesi dell'AI | Argomenti discussi e compresi |
+| Velocità di crescita | Alta | Bassa ma densa |
+| Internalizzazione | Non garantita | Strutturalmente necessaria |
+| Lingua | Indifferente | Italiano |
+| Ruolo dell'utente | Lettore passivo | Preparatore di marcatori + interlocutore |
+
 Il sistema SPB sacrifica velocità per densità e affidabilità epistemica.
 È il modo giusto per domini dove la comprensione profonda vale più della
 copertura estesa.
+
+---
 
 Questo file è la fonte di verità del comportamento dell'agente.
 Aggiornarlo è un atto di manutenzione del sistema, non una modifica minore.

@@ -20,7 +20,7 @@ import re
 import textwrap
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Tuple, List, Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -91,7 +91,7 @@ MODEL_DESCRIPTIONS = {
 # CONFIGURAZIONE PROVIDER
 # ============================================================
 
-def carica_api_keys_ingest() -> dict[str, str | None]:
+def carica_api_keys_ingest():
     env_paths = [
         Path.cwd() / ".env",
         Path.cwd() / "llm-Socrates" / ".env",
@@ -128,7 +128,7 @@ PROVIDER_CONFIG = {
     }
 }
 
-def scegli_provider_e_modello_ingest() -> tuple[str | None, str | None, str | None]:
+def scegli_provider_e_modello_ingest() -> Tuple[str, str, str]:
     print("\n" + "=" * 60, flush=True)
     print("🔧 SCEGLI PROVIDER E MODELLO per INGEST", flush=True)
     print("=" * 60, flush=True)
@@ -309,13 +309,13 @@ RICERCA ESTERNA ABILITATA: Se ritieni utile approfondire un tema con dati, esemp
 # FUNZIONI DI ESTRAZIONE MARCATORI
 # ============================================================
 
-def estrai_blocchi_copia(contenuto: str) -> list[str]:
+def estrai_blocchi_copia(contenuto: str) -> List[str]:
     """Estrae i blocchi >>...<< (testo da copiare nelle evidenze)"""
     pattern = r'>>([\s\S]*?)<<'
     matches = re.findall(pattern, contenuto, re.DOTALL)
     return [m.strip() for m in matches]
 
-def estrai_domande_socratiche(contenuto: str) -> list[str]:
+def estrai_domande_socratiche(contenuto: str) -> List[str]:
     """Estrae le domande ??...?? (da trasformare in discussione socratica)"""
     pattern = r'\?\?([\s\S]*?)\?\?'
     matches = re.findall(pattern, contenuto, re.DOTALL)
@@ -333,7 +333,7 @@ def rimuovi_marcatori(contenuto: str) -> str:
 
 def estrai_evidenze_da_sezione(contenuto: str) -> str:
     """Estrae il contenuto della sezione EVIDENZE dal sandbox"""
-    match = re.search(r'## 📌 EVIDENZE DA DISCUTERE\n+(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
+    match = re.search(r'## 📌 EVIDENZE DA DISCUTERE\n\n(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
     if match:
         return match.group(1).strip()
     return ""
@@ -611,11 +611,6 @@ data_ingest: {date.today()}
 
 ---
 
-## 📌 EVIDENZE DA DISCUTERE
-
-{evidenze_text}
----
-
 ## ❓ DOMANDE DA DISCUTERE
 
 {domande_text}
@@ -873,7 +868,6 @@ Rispondi SOLO con il riassunto, in italiano."""
             
             # Aggiorna il file
             contenuto_attuale = read_file_safe(file_path)
-            # Preserva solo la prima occorrenza di "## ✅ IL MIO SAPERE" se esiste già
             nuovo_blocco = f"\n\n### Discussione {idx+1}: {domanda}\n\n"
             nuovo_blocco += f"**Conversazione:**\n```\n{testo_conv}\n```\n\n"
             nuovo_blocco += f"**Riassunto della conversazione:**\n\n{riassunto_conv}\n\n"
@@ -952,7 +946,7 @@ EVIDENZE DAL TESTO (marcate dall'utente):
 {evidenze_context if evidenze_context else "(nessuna evidenza marcata)"}
 
 STORICO CONVERSAZIONE:
-{'\n'.join(storico[-15:])}
+{chr(10).join(storico[-15:])}
 
 Ultimo messaggio dell'utente: "{user_input}"
 
@@ -1186,7 +1180,7 @@ def cmd_promuovi(titolo: str):
         r'## 🗨️ DISCUSSIONE SOCRATICA\n.*?(?=\n### Discussione|\n## |\Z)',
         r'\(Lascia vuoto[^)]*\)',
         r'\*\*Riassunto della conversazione:\*\*\s*\n+.*?(?=\n\*\*Risposta finale:|\n---)',
-        r'## ✅ IL MIO SAPERE\n.*?(?=\n##|\Z)',
+        r'## ✅ IL MIO SAPERE\n.*?(\Z)',
         r'# SINTESI ESAUSTIVA\n',
     ]
     for pattern in sezioni_da_rimuovere:
@@ -1234,7 +1228,7 @@ fonti: {fonti_str}
 # ============================================================
 
 def estrai_sezione(contenuto: str, pattern: str) -> str:
-    match = re.search(pattern + r'\n+(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
+    match = re.search(pattern + r'\n\n(.*?)(?=\n##|\n---|\Z)', contenuto, re.DOTALL)
     return match.group(1).strip() if match else ""
 
 def cmd_list(cartella: str = None):
@@ -1300,11 +1294,14 @@ def cmd_query(domanda: str):
         ctx = ""
         for score, titolo, percorso in pagine_rilevanti:
             contenuto = read_file_safe(Path(percorso))
-            sintesi = estrai_sezione(contenuto, r'# 📌 SINTESI ESAUSTIVA')
-            mio_sapere = estrai_sezione(contenuto, r'## ✅ IL MIO SAPERE')
+            sintesi = estrai_sezione(contenuto, r'## Sviluppo analitico')
+            mio_sapere = estrai_sezione(contenuto, r'## ✅ Il mio sapere')
+            evidenze = estrai_sezione(contenuto, r'## Le mie evidenze')
             ctx += f"### [[{titolo}]]\n"
             if sintesi:
                 ctx += f"SINTESI: {sintesi[:500]}\n"
+            if evidenze:
+                ctx += f"EVIDENZE: {evidenze[:300]}\n"
             if mio_sapere:
                 ctx += f"CONCLUSIONI: {mio_sapere[:300]}\n"
             ctx += "\n"
@@ -1321,18 +1318,12 @@ def cmd_query(domanda: str):
     
     print(f"\n{Colors.DIM}⚠️ Ricerca online in corso...{Colors.END}\n", flush=True)
     risultati_web = web_search_brave(domanda, num_results=5)
-    if risultati_web:
-        print(f"{Colors.CYAN}[WEB] {Colors.END}", flush=True)
-        for r in risultati_web[:5]:
-            print(f"  🔗 {r['title']}", flush=True)
-            print(f"     {r['snippet'][:200]}", flush=True)
-            print(f"     {Colors.DIM}{r['url']}{Colors.END}", flush=True)
-            print(flush=True)
-    elif risposta_wiki:
-        print_wrapped(f"[WIKI] {risposta_wiki}")
-    else:
-        print(f"{Colors.YELLOW}⚠️ Nessun risultato trovato.{Colors.END}", flush=True)
-    return
+    if not risultati_web:
+        if risposta_wiki:
+            print_wrapped(f"[WIKI] {risposta_wiki}")
+        else:
+            print(f"{Colors.YELLOW}⚠️ Nessun risultato trovato.{Colors.END}", flush=True)
+        return
 
 def cmd_lint():
     print(f"\n{Colors.CYAN}🔬 LINT DEL WIKI{Colors.END}", flush=True)
@@ -1371,7 +1362,7 @@ def cmd_backup():
                 for f in d.rglob("*"):
                     if f.is_file():
                         z.write(f, f.relative_to(Path.cwd()))
-        for f in [AGENT_MD, Path("analisi_wiki.py"), Path(".env")]:
+        for f in [AGENT_MD, Path("analisi.py"), Path(".env")]:
             if f.exists():
                 z.write(f)
     print(f"{Colors.GREEN}✅ Backup: {bkp}{Colors.END}", flush=True)
@@ -1414,7 +1405,6 @@ def print_banner():
 {Colors.YELLOW}💬 DISCUSSIONE (IBRIDA){Colors.END}
   /chat [file]          Avvia/riprendi discussione
   /salva "risposta"     Salva discussione
-  /fine                 Genera riassunto unificato finale
   ℹ️  LLM risponde direttamente a domande fattuali,
      usa approccio socratico per domande concettuali
 
@@ -1559,8 +1549,6 @@ def main():
                 cmd_chat(arg if arg else None)
             elif cmd == "/salva":
                 print(f"{Colors.YELLOW}⚠️ Usa /salva durante la chat{Colors.END}", flush=True)
-            elif cmd == "/fine":
-                cmd_fine()
             elif cmd == "/promuovi":
                 if arg:
                     cmd_promuovi(arg)
