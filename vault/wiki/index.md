@@ -10,3 +10,4 @@
 | [[wiki_post]] | Bitcoin | post | 2026-06-21 |
 | [[wiki_post_telegram]] | Bitcoin | post | 2026-06-22 |
 | [[wiki_post]] | Bitcoin | post | 2026-06-22 |
+| [[wiki_satoshi_paper_it]] | Bitcoin | paper | 2026-06-23 |

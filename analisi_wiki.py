@@ -944,6 +944,7 @@ Rispondi SOLO con il riassunto, in italiano."""
                         evidenze_context = "\n".join([f"- {b.strip()}" for b in blocchi[:3]])
             
             # ============ VERSIONE IBRIDA - CHAT CON RISPOSTE DIRETTE ============
+            storico_str = "\n".join(storico[-15:])
             msg_chat = [{
                 "role": "user",
                 "content": f"""Domanda originale: {domanda}
@@ -952,7 +953,7 @@ EVIDENZE DAL TESTO (marcate dall'utente):
 {evidenze_context if evidenze_context else "(nessuna evidenza marcata)"}
 
 STORICO CONVERSAZIONE:
-{'\n'.join(storico[-15:])}
+{storico_str}
 
 Ultimo messaggio dell'utente: "{user_input}"
 

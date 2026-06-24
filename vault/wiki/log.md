@@ -141,3 +141,14 @@ Sandbox: sdbx_Post_Telegram_V1.md
 - Cicli SPB: 2
 - Pagina wiki: wiki_post.md
 - Sandbox archiviato: sdbx_Post_Telegram_V1.md
+## [2026-06-23 11:59] analizza
+File: satoshi_paper_bitcoin_it.md
+Evidenze: 11
+Domande: 9
+Sandbox: sdbx_satoshi_paper_bitcoin_it_V1.md
+
+
+## [2026-06-23] promuovi | wiki_satoshi_paper_it
+- Cicli SPB: 6
+- Pagina wiki: wiki_satoshi_paper_it.md
+- Sandbox archiviato: sdbx_satoshi_paper_bitcoin_it_V1.md
